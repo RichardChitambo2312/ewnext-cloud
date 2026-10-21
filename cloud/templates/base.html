@@ -294,15 +294,6 @@
       }
       var last = formatSetpoint(input.value);
       input.value = last;
-      lockField(input);
-      var pen = form.querySelector(".pen-btn");
-      if (pen) {
-        pen.addEventListener("click", function (event) {
-          event.preventDefault();
-          event.stopPropagation();
-          unlockField(input);
-        });
-      }
       form.addEventListener("submit", function (event) {
         normalizeSetpointInput();
         if (!input.checkValidity() || input.value === "" || input.value === last) {
@@ -345,24 +336,21 @@
         if (event.key === "Escape") {
           event.preventDefault();
           input.value = last;
-          lockField(input);
           input.blur();
           return;
         }
         if (event.key !== "Enter") return;
         event.preventDefault();
-        if (input.hasAttribute("readonly")) return;
         normalizeSetpointInput();
         var typed = parseSetpoint(input.value);
         if (!input.checkValidity() || input.value === "" || input.value === last) {
-          lockField(input);
           return;
         }
         if (!isFinite(typed) || typed < -50 || typed > 40) return;
         input.value = formatSetpoint(typed);
         var next = input.value;
         last = next;
-        lockField(input);
+        input.blur();
         if (pill) pill.classList.add("is-queued");
         fetch("/setpoint", {
           method: "POST",
@@ -398,9 +386,7 @@
         });
       });
       input.addEventListener("blur", function () {
-        if (input.hasAttribute("readonly")) return;
         input.value = last;
-        lockField(input);
       });
     });
     document.querySelectorAll(".alarm-form").forEach(function (form) {
