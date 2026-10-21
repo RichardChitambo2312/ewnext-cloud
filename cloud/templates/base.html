@@ -64,8 +64,22 @@
         if (event.key !== "Enter") return;
         event.preventDefault();
         if (!input.checkValidity() || input.value === "" || input.value === last) return;
-        last = input.value;
-        form.submit();
+        var next = input.value;
+        last = next;
+        var pill = form.querySelector(".setpoint-pill");
+        if (pill) pill.classList.add("is-queued");
+        fetch("/setpoint", {
+          method: "POST",
+          body: new FormData(form),
+          headers: { Accept: "application/json" },
+          credentials: "same-origin"
+        }).then(function (res) {
+          if (!res.ok) throw new Error("queue failed");
+        }).catch(function () {
+          last = "";
+          if (pill) pill.classList.remove("is-queued");
+          input.value = next;
+        });
       });
     });
     setTimeout(function () {

@@ -722,7 +722,16 @@ def set_setpoint(
             ),
             (device_id, instrument_id, SETPOINT_REGISTER, raw, setpoint_c, now_iso()),
         )
-    return RedirectResponse("/", status_code=302)
+    if "application/json" in (request.headers.get("accept") or "").lower():
+        return JSONResponse(
+            {
+                "ok": True,
+                "queued": True,
+                "instrument_id": instrument_id,
+                "setpoint_c": setpoint_c,
+            }
+        )
+    return RedirectResponse("/", status_code=303)
 
 
 if __name__ == "__main__":
