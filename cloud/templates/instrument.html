@@ -8,15 +8,16 @@
           <div>
             <p class="eyebrow"><a href="/">Instruments</a></p>
             <h1>{{ inst.name }}</h1>
-            <p class="page-sub">Address {{ inst.instrument_id }} · {{ inst.device_id }}</p>
-          </div>
-          <div class="status-icons" aria-label="Operating status">
-            <span class="si si-cool{% if inst.cooling %} is-on{% endif %}" title="CP1 cooling"></span>
-            <span class="si si-fan{% if inst.fan %} is-on{% endif %}" title="FAN"></span>
-            <span class="si si-defrost{% if inst.defrost_active %} is-on{% endif %}" title="DEF1 defrost"></span>
-            <span class="si si-alarm{% if inst.alarm %} is-on{% endif %}" title="Alarm"></span>
+            <p class="page-sub">
+              Address {{ inst.instrument_id }} · {{ inst.device_id }}
+              <span class="online-flag">
+                <span class="dot {% if inst.online %}dot-online{% else %}dot-offline{% endif %}"></span>
+                {{ "Online" if inst.online else "Offline" }}
+              </span>
+            </p>
           </div>
         </div>
+        {% include "status_strip.html" %}
 
         <section class="detail-metrics" aria-label="Live values">
           <article class="detail-metric">
@@ -65,6 +66,12 @@
           <div class="chart-wrap">
             <canvas id="instrument-chart" aria-label="Temperature, defrost, setpoint and status"></canvas>
           </div>
+          <div class="chart-status-legend" aria-label="Status history key">
+            <span class="legend-key key-cool">Cooling</span>
+            <span class="legend-key key-fan">Fan</span>
+            <span class="legend-key key-defrost">Defrost</span>
+            <span class="legend-key key-alarm">Alarm</span>
+          </div>
         </section>
         <script>
           (function () {
@@ -72,6 +79,8 @@
             if (!panel || typeof Chart === "undefined") return;
             var canvas = document.getElementById("instrument-chart");
             var empty = document.querySelector(".chart-empty");
+            var legend = document.querySelector(".chart-status-legend");
+            var wrap = document.querySelector(".chart-wrap");
             var chart = null;
             var colors = {
               temp: "#2980b9",
@@ -137,29 +146,22 @@
                 var xScale = chart.scales.x;
                 if (!pts.length || !area || !xScale) return;
                 var ctx = chart.ctx;
-                var laneH = 7;
-                var gap = 5;
-                var top = area.bottom + 10;
+                var railH = 16;
+                var top = area.bottom + 8;
+                var laneH = 3;
                 ctx.save();
+                ctx.fillStyle = "rgba(226,230,236,0.65)";
+                roundRect(ctx, area.left, top, area.right - area.left, railH, 6);
+                ctx.fill();
                 statusLanes.forEach(function (lane, li) {
-                  var y = top + li * (laneH + gap);
-                  ctx.fillStyle = "rgba(226,230,236,0.9)";
-                  roundRect(ctx, area.left, y, area.right - area.left, laneH, 4);
-                  ctx.fill();
+                  var y = top + 2 + li * 3;
                   runs(pts, lane.key).forEach(function (span) {
                     var x0 = xScale.getPixelForValue(span[0]);
                     var x1 = xScale.getPixelForValue(span[1]);
-                    var left = Math.min(x0, x1) - 2;
-                    var width = Math.max(4, Math.abs(x1 - x0) + 4);
                     ctx.fillStyle = lane.color;
-                    roundRect(ctx, left, y, width, laneH, 4);
+                    roundRect(ctx, Math.min(x0, x1) - 1, y, Math.max(3, Math.abs(x1 - x0) + 2), laneH, 1.5);
                     ctx.fill();
                   });
-                  ctx.fillStyle = "#7a8494";
-                  ctx.font = "600 10px Helvetica Neue, Helvetica, Arial, sans-serif";
-                  ctx.textBaseline = "middle";
-                  ctx.textAlign = "left";
-                  ctx.fillText(lane.label, area.right + 8, y + laneH / 2);
                 });
                 ctx.restore();
                 runs(pts, "alarm").forEach(function (span) {
@@ -176,6 +178,8 @@
             function render(points) {
               var hasData = points && points.length;
               empty.hidden = !!hasData;
+              if (legend) legend.hidden = !hasData;
+              if (wrap) wrap.style.display = hasData ? "" : "none";
               canvas.style.display = hasData ? "block" : "none";
               if (!hasData) {
                 if (chart) { chart.destroy(); chart = null; }
@@ -194,7 +198,7 @@
                 responsive: true,
                 maintainAspectRatio: false,
                 interaction: { mode: "index", intersect: false },
-                layout: { padding: { bottom: 58, right: 44 } },
+                layout: { padding: { bottom: 28, right: 8 } },
                 plugins: {
                   legend: { position: "top", labels: { boxWidth: 12, usePointStyle: true } },
                   tooltip: {

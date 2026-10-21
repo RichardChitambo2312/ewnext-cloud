@@ -1,0 +1,30 @@
+<div class="status-strip" aria-label="Operating status">
+  <div class="status-chip chip-cool{% if inst.cooling %} is-on{% endif %}" title="CP1 cooling">
+    <span class="si si-cool{% if inst.cooling %} is-on{% endif %}" aria-hidden="true"></span>
+    <span class="status-chip-meta">
+      <span class="status-chip-name">Cooling</span>
+      <span class="status-chip-state">{{ inst.cp1_label }}</span>
+    </span>
+  </div>
+  <div class="status-chip chip-fan{% if inst.fan %} is-on{% endif %}" title="FAN">
+    <span class="si si-fan{% if inst.fan %} is-on{% endif %}" aria-hidden="true"></span>
+    <span class="status-chip-meta">
+      <span class="status-chip-name">Fan</span>
+      <span class="status-chip-state">{{ inst.fan_label }}</span>
+    </span>
+  </div>
+  <div class="status-chip chip-defrost{% if inst.defrost_active %} is-on{% endif %}" title="DEF1 defrost">
+    <span class="si si-defrost{% if inst.defrost_active %} is-on{% endif %}" aria-hidden="true"></span>
+    <span class="status-chip-meta">
+      <span class="status-chip-name">Defrost</span>
+      <span class="status-chip-state">{{ inst.def1_label }}</span>
+    </span>
+  </div>
+  <div class="status-chip chip-alarm{% if inst.alarm %} is-on{% endif %}" title="Alarm">
+    <span class="si si-alarm{% if inst.alarm %} is-on{% endif %}" aria-hidden="true"></span>
+    <span class="status-chip-meta">
+      <span class="status-chip-name">Alarm</span>
+      <span class="status-chip-state">{% if inst.alarm %}ON{% else %}OFF{% endif %}</span>
+    </span>
+  </div>
+</div>

@@ -25,20 +25,15 @@
                 <h3>{{ inst.name }}</h3>
                 <p>Address: {{ inst.instrument_id }}</p>
               </div>
+              <span class="online-flag">
+                <span class="dot {% if inst.online %}dot-online{% else %}dot-offline{% endif %}"></span>
+                {{ "Online" if inst.online else "Offline" }}
+              </span>
             </header>
 
-            <div class="status-icons" aria-label="Operating status">
-              <span class="si si-cool{% if inst.cooling %} is-on{% endif %}" title="CP1 cooling" role="img" aria-label="Cooling {{ inst.cp1_label }}"></span>
-              <span class="si si-fan{% if inst.fan %} is-on{% endif %}" title="FAN" role="img" aria-label="Fan {{ inst.fan_label }}"></span>
-              <span class="si si-defrost{% if inst.defrost_active %} is-on{% endif %}" title="DEF1 defrost" role="img" aria-label="Defrost {{ inst.def1_label }}"></span>
-              <span class="si si-alarm{% if inst.alarm %} is-on{% endif %}" title="Alarm" role="img" aria-label="Alarm {% if inst.alarm %}ON{% else %}OFF{% endif %}"></span>
-            </div>
+            {% include "status_strip.html" %}
 
             <dl class="instrument-metrics">
-              <div>
-                <dt>Online:</dt>
-                <dd><span class="dot {% if inst.online %}dot-online{% else %}dot-offline{% endif %}"></span></dd>
-              </div>
               <div>
                 <dt>Temperature:</dt>
                 <dd><span class="pill pill-temp">{{ inst.temperature_label }}</span></dd>
@@ -70,18 +65,6 @@
                     </div>
                   </form>
                 </dd>
-              </div>
-              <div>
-                <dt>CP1 cooling</dt>
-                <dd><span class="pill {% if inst.cooling %}pill-on-cool{% else %}pill-off{% endif %}">{{ inst.cp1_label }}</span></dd>
-              </div>
-              <div>
-                <dt>DEF1 defrost</dt>
-                <dd><span class="pill {% if inst.defrost_active %}pill-on-defrost{% else %}pill-off{% endif %}">{{ inst.def1_label }}</span></dd>
-              </div>
-              <div>
-                <dt>FAN</dt>
-                <dd><span class="pill {% if inst.fan %}pill-on-fan{% else %}pill-off{% endif %}">{{ inst.fan_label }}</span></dd>
               </div>
             </dl>
 

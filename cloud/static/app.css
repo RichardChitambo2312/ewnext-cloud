@@ -371,19 +371,94 @@ button {
   color: var(--ink);
 }
 
-.status-icons {
-  display: flex;
-  justify-content: flex-end;
+.online-flag {
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
-  padding-top: 4px;
+  gap: 6px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.page-sub .online-flag {
+  margin-left: 10px;
+}
+
+.status-strip {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.shell-main > .status-strip {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: -8px 0 16px;
+}
+
+.status-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: var(--fog);
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.status-chip-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.15;
+}
+
+.status-chip-name {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.status-chip-state {
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.status-chip.is-on.chip-cool {
+  background: var(--cool-soft);
+  border-color: rgba(41, 128, 185, 0.3);
+  color: var(--cool-on);
+}
+
+.status-chip.is-on.chip-fan {
+  background: var(--ok-soft);
+  border-color: rgba(34, 197, 94, 0.3);
+  color: #15803d;
+}
+
+.status-chip.is-on.chip-defrost {
+  background: var(--defrost-soft);
+  border-color: rgba(249, 115, 22, 0.3);
+  color: #c2410c;
+}
+
+.status-chip.is-on.chip-alarm {
+  background: var(--alarm-soft);
+  border-color: rgba(239, 68, 68, 0.35);
+  color: var(--alarm);
 }
 
 .si {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   display: inline-block;
-  flex: 0 0 22px;
+  flex: 0 0 24px;
   background-color: var(--icon-off);
   -webkit-mask: var(--si-icon) center / contain no-repeat;
   mask: var(--si-icon) center / contain no-repeat;
@@ -391,6 +466,7 @@ button {
 
 .si-cool {
   --si-icon: url("/static/icons/cooling.png");
+  transform: scale(1.18);
 }
 
 .si-fan {
@@ -858,6 +934,37 @@ th {
   height: 440px;
 }
 
+.chart-status-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.legend-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+.legend-key::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.legend-key.key-cool { color: var(--cool-on); }
+.legend-key.key-fan { color: var(--fan-on); }
+.legend-key.key-defrost { color: var(--defrost); }
+.legend-key.key-alarm { color: var(--alarm); }
+
 .chart-empty {
   margin: 0 0 8px;
   color: var(--muted);
@@ -883,5 +990,9 @@ th {
 
   .split {
     grid-template-columns: 1fr;
+  }
+
+  .shell-main > .status-strip {
+    grid-template-columns: 1fr 1fr;
   }
 }
