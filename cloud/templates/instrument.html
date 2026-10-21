@@ -96,6 +96,12 @@
               });
             }
 
+            function statusBars(points, key, lane) {
+              return points.map(function (p) {
+                return Number(p[key]) ? [lane, lane + 0.8] : null;
+              });
+            }
+
             function render(points) {
               var hasData = points && points.length;
               empty.hidden = !!hasData;
@@ -105,16 +111,25 @@
                 return;
               }
               var labels = points.map(function (p) { return fmtTick(p.t); });
+              var barOpts = {
+                type: "bar",
+                yAxisID: "y1",
+                borderWidth: 0,
+                grouped: false,
+                categoryPercentage: 1,
+                barPercentage: 1,
+                skipNull: true
+              };
               var data = {
                 labels: labels,
                 datasets: [
                   { label: "Temperature", data: series(points, "temp"), borderColor: colors.temp, backgroundColor: "transparent", yAxisID: "y", tension: 0.2, pointRadius: 0, borderWidth: 2 },
                   { label: "Defrost temp", data: series(points, "defrost"), borderColor: colors.defrost, backgroundColor: "transparent", yAxisID: "y", tension: 0.2, pointRadius: 0, borderWidth: 2 },
                   { label: "Setpoint", data: series(points, "setpoint"), borderColor: colors.setpoint, backgroundColor: "transparent", yAxisID: "y", tension: 0, pointRadius: 0, borderWidth: 2, borderDash: [5, 4] },
-                  { label: "CP1 cooling", data: series(points, "cooling"), borderColor: colors.cooling, backgroundColor: "rgba(37,99,235,0.12)", yAxisID: "y1", stepped: true, pointRadius: 0, borderWidth: 2, fill: true },
-                  { label: "DEF1 defrost", data: series(points, "defrost_on"), borderColor: colors.defrostOn, backgroundColor: "rgba(234,88,12,0.10)", yAxisID: "y1", stepped: true, pointRadius: 0, borderWidth: 2, fill: true },
-                  { label: "FAN", data: series(points, "fan"), borderColor: colors.fan, backgroundColor: "rgba(34,197,94,0.10)", yAxisID: "y1", stepped: true, pointRadius: 0, borderWidth: 2, fill: true },
-                  { label: "Alarm", data: series(points, "alarm"), borderColor: colors.alarm, backgroundColor: "rgba(239,68,68,0.12)", yAxisID: "y1", stepped: true, pointRadius: 0, borderWidth: 2, fill: true }
+                  Object.assign({ label: "CP1 cooling", data: statusBars(points, "cooling", 3.1), backgroundColor: "rgba(37,99,235,0.85)" }, barOpts),
+                  Object.assign({ label: "DEF1 defrost", data: statusBars(points, "defrost_on", 2.1), backgroundColor: "rgba(234,88,12,0.85)" }, barOpts),
+                  Object.assign({ label: "FAN", data: statusBars(points, "fan", 1.1), backgroundColor: "rgba(34,197,94,0.85)" }, barOpts),
+                  Object.assign({ label: "Alarm", data: statusBars(points, "alarm", 0.1), backgroundColor: "rgba(239,68,68,0.85)" }, barOpts)
                 ]
               };
               var options = {
@@ -126,6 +141,7 @@
                 },
                 scales: {
                   x: {
+                    stacked: false,
                     ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 8, color: "#7a8494" },
                     grid: { color: "rgba(226,230,236,0.8)" }
                   },
@@ -137,19 +153,30 @@
                   y1: {
                     position: "right",
                     min: 0,
-                    max: 1.05,
+                    max: 4,
+                    offset: false,
                     title: { display: true, text: "Status" },
-                    ticks: { stepSize: 1, callback: function (v) { return v === 1 ? "On" : v === 0 ? "Off" : ""; } },
+                    ticks: {
+                      color: "#7a8494",
+                      stepSize: 0.5,
+                      autoSkip: false,
+                      callback: function (v) {
+                        if (v === 0.5) return "Alarm";
+                        if (v === 1.5) return "FAN";
+                        if (v === 2.5) return "DEF1";
+                        if (v === 3.5) return "CP1";
+                        return "";
+                      }
+                    },
                     grid: { drawOnChartArea: false }
                   }
                 }
               };
               if (chart) {
-                chart.data = data;
-                chart.update();
-              } else {
-                chart = new Chart(canvas, { type: "line", data: data, options: options });
+                chart.destroy();
+                chart = null;
               }
+              chart = new Chart(canvas, { type: "line", data: data, options: options });
             }
 
             function loadRange(rangeKey) {
