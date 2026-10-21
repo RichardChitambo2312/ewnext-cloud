@@ -1,11 +1,23 @@
 {% extends "base.html" %}
-{% block title %}{{ site.device_id }} — Keyview Cloud{% endblock %}
+{% block title %}{{ site.display_name }} — Keyview Cloud{% endblock %}
 {% block content %}
         <div class="page-head">
           <div>
-            <p class="eyebrow"><a href="/sites">Sites</a></p>
-            <h1>{{ site.device_id }}</h1>
-            <p class="page-sub">{{ site.count }} / {{ site.max_n }} instruments · {{ site.online_n }} online{% if site.alarm_n %} · {{ site.alarm_n }} alarm{% endif %}. Rename with Enter. Toggle power to switch the controller on or off. Edit setpoint, then press Enter to confirm.</p>
+            <p class="eyebrow"><a href="/sites">Sites</a> · Device ID {{ site.device_id }}</p>
+            <form class="name-inline" method="post" action="/site/name" data-allow-blank="1">
+              <input type="hidden" name="device_id" value="{{ site.device_id }}">
+              <input type="hidden" name="next" value="{{ site.href }}">
+              <label class="sr-only" for="site-title">Store name</label>
+              <input
+                class="name-input name-input-lg"
+                id="site-title"
+                name="name"
+                value="{{ site.store_name }}"
+                maxlength="80"
+                placeholder="{{ site.device_id }}"
+              >
+            </form>
+            <p class="page-sub">{{ site.count }} / {{ site.max_n }} instruments · {{ site.online_n }} online{% if site.alarm_n %} · {{ site.alarm_n }} alarm{% endif %}. Rename the store with Enter. Toggle power to switch the controller on or off. Edit setpoint, then press Enter to confirm.</p>
           </div>
         </div>
 

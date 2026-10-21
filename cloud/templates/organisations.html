@@ -56,7 +56,8 @@
             <ul class="org-site-list">
               {% for site in org.sites %}
               <li>
-                <a href="/sites/{{ site }}">{{ site }}</a>
+                <a href="/sites/{{ site }}">{{ site_names.get(site, site) }}</a>
+                <span class="muted">{{ site }}</span>
                 <form method="post" action="/organisations/{{ org.id }}/sites/delete" onsubmit="return confirm('Remove this site from {{ org.name }}?');">
                   <input type="hidden" name="device_id" value="{{ site }}">
                   <button class="ghost-btn ghost-btn-sm" type="submit">Delete site</button>

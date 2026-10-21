@@ -10,6 +10,7 @@ import math
 import os
 import secrets
 import sqlite3
+import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -211,8 +212,19 @@ def init_db() -> None:
             """
         )
         _ensure_column(cur, "app_users", "organisation_id", "INTEGER")
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS sites (
+                device_id TEXT PRIMARY KEY,
+                uid TEXT NOT NULL UNIQUE,
+                store_name TEXT,
+                created_at {ts} NOT NULL
+            )
+            """
+        )
         conn.commit()
         _ensure_org_tree(cur)
+        _backfill_sites(cur)
         conn.commit()
 
 
@@ -335,6 +347,83 @@ def normalize_device_id(value: Any) -> str:
     if not raw:
         return "unknown"
     return raw[:64]
+
+
+def new_site_uid() -> str:
+    return "KV-" + uuid.uuid4().hex[:16].upper()
+
+
+def site_display_name(store_name: Any, device_id: str) -> str:
+    name = str(store_name or "").strip()
+    return name if name else device_id
+
+
+def ensure_site_record(cur, device_id: str) -> str:
+    device_id = normalize_device_id(device_id)
+    cur.execute(q("SELECT uid FROM sites WHERE device_id=?"), (device_id,))
+    row = cur.fetchone()
+    existing = _row_get(row, "uid", 0) if row is not None else None
+    if existing:
+        return str(existing)
+    for _ in range(8):
+        uid = new_site_uid()
+        try:
+            cur.execute(
+                q("INSERT INTO sites (device_id, uid, store_name, created_at) VALUES (?, ?, ?, ?)"),
+                (device_id, uid, "", now_iso()),
+            )
+            return uid
+        except Exception:
+            cur.execute(q("SELECT uid FROM sites WHERE device_id=?"), (device_id,))
+            row = cur.fetchone()
+            existing = _row_get(row, "uid", 0) if row is not None else None
+            if existing:
+                return str(existing)
+    uid = "KV-" + uuid.uuid4().hex.upper()
+    cur.execute(
+        q("INSERT INTO sites (device_id, uid, store_name, created_at) VALUES (?, ?, ?, ?)"),
+        (device_id, uid, "", now_iso()),
+    )
+    return uid
+
+
+def _backfill_sites(cur) -> None:
+    ids: set[str] = set()
+    cur.execute("SELECT DISTINCT device_id FROM instruments")
+    for row in fetchall(cur):
+        device_id = str(_row_get(row, "device_id", 0) or "").strip()
+        if device_id:
+            ids.add(device_id)
+    cur.execute("SELECT device_id FROM org_sites")
+    for row in fetchall(cur):
+        device_id = str(_row_get(row, "device_id", 0) or "").strip()
+        if device_id:
+            ids.add(device_id)
+    for device_id in sorted(ids):
+        ensure_site_record(cur, device_id)
+
+
+def load_site_records(device_ids: list[str] | None = None) -> dict[str, dict]:
+    with db() as conn:
+        cur = conn.cursor()
+        for device_id in device_ids or []:
+            if str(device_id or "").strip():
+                ensure_site_record(cur, str(device_id))
+        cur.execute("SELECT device_id, uid, store_name, created_at FROM sites")
+        rows = fetchall(cur)
+    out: dict[str, dict] = {}
+    for row in rows:
+        device_id = str(row.get("device_id") or "").strip()
+        if not device_id:
+            continue
+        store_name = str(row.get("store_name") or "").strip()
+        out[device_id] = {
+            "uid": str(row.get("uid") or ""),
+            "store_name": store_name,
+            "display_name": site_display_name(store_name, device_id),
+            "created_at": row.get("created_at"),
+        }
+    return out
 
 
 def row_count(row: Any) -> int:
@@ -730,7 +819,7 @@ def compute_kpis(widgets: list[dict], sites: list[dict]) -> dict[str, Any]:
     if not issue_sites:
         issue_label = "All clear"
     elif len(issue_sites) == 1:
-        issue_label = issue_sites[0]["device_id"]
+        issue_label = issue_sites[0].get("display_name") or issue_sites[0]["device_id"]
     else:
         issue_label = f"{len(issue_sites)} sites"
     pct = int(round(100 * online_n / total)) if total else 0
@@ -749,7 +838,7 @@ def build_alarm_feed(widgets: list[dict]) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for widget in widgets:
         name = widget.get("name") or f"Instrument {widget.get('instrument_id')}"
-        site = widget.get("device_id") or "unknown"
+        site = widget.get("site_name") or widget.get("device_id") or "unknown"
         when = relative_ago(widget.get("last_seen"))
         href = widget.get("href") or "/"
         if widget.get("alarm"):
@@ -1120,6 +1209,7 @@ async def ingest(request: Request) -> JSONResponse:
             (device_id,),
         )
         jobs = fetchall(cur)
+        uid = ensure_site_record(cur, device_id)
 
     payload_jobs = [
         {
@@ -1133,7 +1223,9 @@ async def ingest(request: Request) -> JSONResponse:
         }
         for j in jobs
     ]
-    return JSONResponse({"ok": True, "jobs": payload_jobs})
+    return JSONResponse(
+        {"ok": True, "jobs": payload_jobs, "device_id": device_id, "uid": uid}
+    )
 
 
 @app.post("/api/modbus/jobs/{job_id}/result")
@@ -1232,6 +1324,14 @@ def dashboard_shell(request: Request | None = None) -> dict:
         )
         for inst in instruments
     ]
+    records = load_site_records(
+        [str(inst.get("device_id") or "") for inst in instruments]
+    )
+    for widget in widgets:
+        device_id = str(widget.get("device_id") or "")
+        rec = records.get(device_id) or {}
+        widget["site_name"] = rec.get("display_name") or device_id
+        widget["site_uid"] = rec.get("uid") or ""
     sites: list[dict[str, Any]] = []
     by_site: dict[str, list[dict]] = {}
     for widget in widgets:
@@ -1240,9 +1340,17 @@ def dashboard_shell(request: Request | None = None) -> dict:
     for device_id, insts in by_site.items():
         meta = site_status_meta(insts)
         encoded = quote(device_id, safe="")
+        rec = records.get(device_id) or {}
+        store_name = rec.get("store_name") or ""
+        device_online = any(w.get("online") for w in insts)
         sites.append(
             {
                 "device_id": device_id,
+                "store_name": store_name,
+                "display_name": rec.get("display_name") or device_id,
+                "uid": rec.get("uid") or "",
+                "device_online": device_online,
+                "device_status": "Online" if device_online else "Offline",
                 "instruments": insts,
                 "count": len(insts),
                 "max_n": MAX_INSTRUMENTS_PER_SITE,
@@ -1286,6 +1394,7 @@ def dashboard_shell(request: Request | None = None) -> dict:
         "site_n": len(sites),
         "kpis": compute_kpis(widgets, sites),
         "alarm_feed": build_alarm_feed(widgets),
+        "site_names": {row["device_id"]: row["display_name"] for row in sites},
         "admin_name": session_name(request) if request is not None else "Admin",
         "is_manager": is_manager(request) if request is not None else True,
     }
@@ -1452,7 +1561,14 @@ def device_admin_page(request: Request):
 def known_site_ids() -> list[str]:
     with db() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT DISTINCT device_id FROM instruments ORDER BY device_id")
+        cur.execute(
+            """
+            SELECT device_id FROM sites
+            UNION
+            SELECT DISTINCT device_id FROM instruments
+            ORDER BY 1
+            """
+        )
         rows = fetchall(cur)
     ids: list[str] = []
     for row in rows:
@@ -1511,10 +1627,13 @@ def users_page_ctx(request: Request, error: str | None = None, notice: str | Non
     attach_session(ctx, request, "users")
     orgs = load_organisations()
     sub_orgs = [row for row in orgs if as_int(row.get("parent_id"))]
+    known = known_site_ids()
+    names = {k: v["display_name"] for k, v in load_site_records(known).items()}
     ctx.update(
         {
             "app_users": load_app_users(),
-            "known_sites": known_site_ids(),
+            "known_sites": known,
+            "site_names": names,
             "sub_orgs": sub_orgs,
             "error": error,
             "notice": notice,
@@ -1546,11 +1665,13 @@ def organisations_page_ctx(request: Request, error: str | None = None, notice: s
         child["locked"] = bool(int(child.get("locked") or 0))
         child["team"] = [user for user in users if user.get("organisation_id") == oid]
         child["href"] = f"/organisations/{oid}"
+    names = {k: v["display_name"] for k, v in load_site_records(all_sites).items()}
     ctx.update(
         {
             "root_org": root,
             "sub_orgs": children,
             "unassigned_sites": unassigned,
+            "site_names": names,
             "error": error,
             "notice": notice,
         }
@@ -1638,6 +1759,7 @@ def organisations_add_site(request: Request, org_id: int, device_id: str = Form(
                 organisations_page_ctx(request, error="Sites are added to a sub-organisation"),
                 status_code=400,
             )
+        ensure_site_record(cur, site)
         cur.execute(q("DELETE FROM org_sites WHERE device_id=?"), (site,))
         cur.execute(q("INSERT INTO org_sites (organisation_id, device_id) VALUES (?, ?)"), (org_id, site))
     return templates.TemplateResponse(
@@ -1886,6 +2008,37 @@ def set_setpoint(
                 "queued": True,
                 "instrument_id": instrument_id,
                 "setpoint_c": setpoint_c,
+            }
+        )
+    return _redirect_next(next)
+
+
+@app.post("/site/name")
+def set_site_name(
+    request: Request,
+    device_id: str = Form(...),
+    name: str = Form(""),
+    next: str = Form(""),
+):
+    require_site_access(request, device_id)
+    store_name = " ".join(str(name or "").split())
+    if len(store_name) > NAME_MAX_LEN:
+        raise HTTPException(400, "name must be 1 to 80 characters")
+    with db() as conn:
+        cur = conn.cursor()
+        ensure_site_record(cur, device_id)
+        cur.execute(
+            q("UPDATE sites SET store_name=? WHERE device_id=?"),
+            (store_name, normalize_device_id(device_id)),
+        )
+    display = site_display_name(store_name, normalize_device_id(device_id))
+    if _wants_json(request):
+        return JSONResponse(
+            {
+                "ok": True,
+                "device_id": normalize_device_id(device_id),
+                "name": display,
+                "store_name": store_name,
             }
         )
     return _redirect_next(next)

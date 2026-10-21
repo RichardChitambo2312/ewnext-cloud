@@ -61,7 +61,7 @@
               {% for site in sites %}
               <a class="site-status-row" href="{{ site.href }}">
                 <div class="site-status-main">
-                  <strong>{{ site.device_id }}</strong>
+                  <strong>{{ site.display_name }}</strong>
                   <span class="site-status-flag site-status-{{ site.status_kind }}">
                     <span class="dot"></span>
                     {{ site.status_text }}

@@ -1456,6 +1456,38 @@ th {
   font-weight: 700;
 }
 
+.site-id-meta {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.site-pick-card .name-input-lg {
+  font-size: 1.2rem;
+}
+
+.device-admin-table {
+  min-width: 960px;
+}
+
+.device-admin-table .name-input {
+  min-width: 160px;
+  font-size: 0.9rem;
+}
+
+.uid-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.uid-code {
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  word-break: break-all;
+}
+
 .notice {
   color: #15803d;
   background: var(--ok-soft);

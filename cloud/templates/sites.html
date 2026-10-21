@@ -5,7 +5,7 @@
           <div>
             <p class="eyebrow">Locations</p>
             <h1>Sites</h1>
-            <p class="page-sub">Choose a site to open its dashboard. Each site is identified by the gateway Device ID and can have up to 15 instruments.</p>
+            <p class="page-sub">Choose a site to open its dashboard. Rename a site to a store name, then press Enter. Each site is identified by the gateway Device ID and can have up to 15 instruments.</p>
           </div>
         </div>
 
@@ -17,18 +17,31 @@
         {% else %}
         <div class="site-picker" aria-label="Choose a site">
           {% for site in sites %}
-          <a class="site-pick-card" href="{{ site.href }}">
+          <article class="site-pick-card">
             <header>
               <p class="eyebrow">Site</p>
-              <h2>{{ site.device_id }}</h2>
+              <form class="name-inline" method="post" action="/site/name" data-allow-blank="1">
+                <input type="hidden" name="device_id" value="{{ site.device_id }}">
+                <input type="hidden" name="next" value="/sites">
+                <label class="sr-only" for="site-nm-{{ site.device_id }}">Store name</label>
+                <input
+                  class="name-input name-input-lg"
+                  id="site-nm-{{ site.device_id }}"
+                  name="name"
+                  value="{{ site.store_name }}"
+                  maxlength="80"
+                  placeholder="{{ site.device_id }}"
+                >
+              </form>
             </header>
+            <p class="site-id-meta">Device ID {{ site.device_id }}</p>
             <p class="site-meta">{{ site.count }} / {{ site.max_n }} instruments · {{ site.online_n }} online{% if site.alarm_n %} · {{ site.alarm_n }} alarm{% endif %}</p>
             <span class="site-status-flag site-status-{{ site.status_kind }}">
               <span class="dot"></span>
               {{ site.status_text }}
             </span>
-            <span class="site-pick-cta">Open dashboard</span>
-          </a>
+            <a class="site-pick-cta" href="{{ site.href }}">Open dashboard</a>
+          </article>
           {% endfor %}
         </div>
         {% endif %}

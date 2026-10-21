@@ -8,7 +8,7 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>{% block title %}Keyview Cloud{% endblock %}</title>
-  <link rel="stylesheet" href="/static/app.css?v=chart3">
+  <link rel="stylesheet" href="/static/app.css?v=sites3">
   {% block extra_head %}{% endblock %}
 </head>
 <body>
@@ -118,13 +118,14 @@
       var last = input.value;
       function saveName() {
         var next = (input.value || "").trim();
-        if (!next || next === last) {
-          input.value = last;
+        var allowBlank = form.getAttribute("data-allow-blank") === "1";
+        if ((!next && !allowBlank) || next === last) {
+          if (!allowBlank) input.value = last;
           return;
         }
         last = next;
         input.value = next;
-        fetch("/instrument/name", {
+        fetch(form.getAttribute("action") || "/instrument/name", {
           method: "POST",
           body: new FormData(form),
           headers: { Accept: "application/json" },
@@ -133,9 +134,9 @@
           if (!res.ok) throw new Error("rename failed");
           return res.json();
         }).then(function (body) {
-          if (body && body.name) {
-            last = body.name;
-            input.value = body.name;
+          if (body && (body.name || body.store_name != null)) {
+            last = body.store_name != null ? String(body.store_name) : body.name;
+            input.value = last;
           }
         }).catch(function () {
           last = "";

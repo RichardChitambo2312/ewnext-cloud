@@ -6,7 +6,7 @@
 {% block content %}
         <div class="page-head">
           <div>
-            <p class="eyebrow"><a href="/sites">Sites</a> · <a href="{{ inst.site_href }}">{{ inst.device_id }}</a></p>
+            <p class="eyebrow"><a href="/sites">Sites</a> · <a href="{{ inst.site_href }}">{{ inst.site_name }}</a></p>
             <form class="name-inline" method="post" action="/instrument/name">
               <input type="hidden" name="device_id" value="{{ inst.device_id }}">
               <input type="hidden" name="instrument_id" value="{{ inst.instrument_id }}">
@@ -15,7 +15,7 @@
               <input class="name-input name-input-lg" id="nm-detail" name="name" value="{{ inst.name }}" maxlength="80" required>
             </form>
             <p class="page-sub">
-              Site {{ inst.device_id }} · Address {{ inst.instrument_id }}
+              Site {{ inst.site_name }} · Device ID {{ inst.device_id }} · Address {{ inst.instrument_id }}
               <span class="online-flag">
                 <span class="dot {% if inst.online %}dot-online{% else %}dot-offline{% endif %}"></span>
                 {{ "Online" if inst.online else "Offline" }}

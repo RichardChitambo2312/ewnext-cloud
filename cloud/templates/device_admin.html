@@ -5,28 +5,81 @@
           <div>
             <p class="eyebrow">Administration</p>
             <h1>Device Admin</h1>
-            <p class="page-sub">Rename controllers, switch power, and adjust setpoints across every site you administer.</p>
+            <p class="page-sub">Onboarded gateways with Device ID, store name, connected instruments, online status, and the UID issued by the API.</p>
           </div>
         </div>
 
         {% if not sites %}
         <article class="empty">
           <h2>No devices yet</h2>
-          <p>Telemetry with a Device ID will appear here as site devices.</p>
+          <p>Telemetry with a Device ID will onboard here and receive a Unique Identifier (UID).</p>
         </article>
-        {% endif %}
-
-        {% for site in sites %}
-        <section class="site-block" aria-label="Devices at {{ site.device_id }}">
-          <header class="site-head">
-            <div>
-              <p class="eyebrow">Site</p>
-              <h2>{{ site.device_id }}</h2>
-              <p class="site-meta">{{ site.count }} / {{ site.max_n }} devices · {{ site.online_n }} online{% if site.alarm_n %} · {{ site.alarm_n }} alarm{% endif %}</p>
-            </div>
-            <a class="site-pick-cta" href="{{ site.href }}">Open site</a>
-          </header>
-          {% include "instrument_cards.html" %}
+        {% else %}
+        <section class="panel" aria-label="Onboarded devices">
+          <div class="table-wrap">
+            <table class="device-admin-table">
+              <thead>
+                <tr>
+                  <th>Device ID</th>
+                  <th>Store name</th>
+                  <th>Instruments connected</th>
+                  <th>Device</th>
+                  <th>Unique Identifier (UID)</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for site in sites %}
+                <tr>
+                  <td><code>{{ site.device_id }}</code></td>
+                  <td>
+                    <form class="name-inline" method="post" action="/site/name" data-allow-blank="1">
+                      <input type="hidden" name="device_id" value="{{ site.device_id }}">
+                      <input type="hidden" name="next" value="/device-admin">
+                      <label class="sr-only" for="adm-nm-{{ site.device_id }}">Store name</label>
+                      <input
+                        class="name-input"
+                        id="adm-nm-{{ site.device_id }}"
+                        name="name"
+                        value="{{ site.store_name }}"
+                        maxlength="80"
+                        placeholder="{{ site.device_id }}"
+                      >
+                    </form>
+                  </td>
+                  <td>{{ site.count }} / {{ site.max_n }}</td>
+                  <td>
+                    <span class="status {{ 'done' if site.device_online else 'error' }}">
+                      {{ site.device_status }}
+                    </span>
+                  </td>
+                  <td>
+                    <div class="uid-cell">
+                      <code class="uid-code">{{ site.uid or "—" }}</code>
+                      {% if site.uid %}
+                      <button type="button" class="ghost-btn ghost-btn-sm copy-uid" data-uid="{{ site.uid }}">Copy</button>
+                      {% endif %}
+                    </div>
+                  </td>
+                  <td><a class="site-pick-cta" href="{{ site.href }}">Open site</a></td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
         </section>
-        {% endfor %}
+        <script>
+          document.querySelectorAll(".copy-uid").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+              var uid = btn.getAttribute("data-uid") || "";
+              if (!uid || !navigator.clipboard) return;
+              navigator.clipboard.writeText(uid).then(function () {
+                var prev = btn.textContent;
+                btn.textContent = "Copied";
+                setTimeout(function () { btn.textContent = prev; }, 1200);
+              });
+            });
+          });
+        </script>
+        {% endif %}
 {% endblock %}

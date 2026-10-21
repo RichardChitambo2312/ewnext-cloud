@@ -41,7 +41,7 @@
                 {% for site in known_sites %}
                 <label class="check-chip">
                   <input type="checkbox" name="site_id" value="{{ site }}">
-                  <span>{{ site }}</span>
+                  <span>{{ site_names.get(site, site) }}</span>
                 </label>
                 {% endfor %}
               </div>
@@ -81,7 +81,7 @@
                   {% for site in known_sites %}
                   <label class="check-chip">
                     <input type="checkbox" name="site_id" value="{{ site }}"{% if site in user.sites %} checked{% endif %}>
-                    <span>{{ site }}</span>
+                    <span>{{ site_names.get(site, site) }}</span>
                   </label>
                   {% endfor %}
                 </div>
