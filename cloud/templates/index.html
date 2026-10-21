@@ -5,7 +5,7 @@
           <div>
             <p class="eyebrow">Live controllers</p>
             <h1>Instruments</h1>
-            <p class="page-sub">Each controller is shown as its own widget. Change setpoint from the value and press Set.</p>
+            <p class="page-sub">Each controller is shown as its own widget. Adjust the setpoint value to queue a write.</p>
           </div>
         </div>
 
@@ -46,29 +46,27 @@
                 <dt>Defrost temp</dt>
                 <dd><span class="pill pill-defrost">{{ inst.defrost_label }}</span></dd>
               </div>
-              <div class="metric-setpoint">
+              <div>
                 <dt>Setpoint value</dt>
                 <dd>
                   <form class="setpoint-inline" method="post" action="/setpoint">
                     <input type="hidden" name="device_id" value="{{ inst.device_id }}">
                     <input type="hidden" name="instrument_id" value="{{ inst.instrument_id }}">
                     <label class="sr-only" for="sp-{{ inst.device_id }}-{{ inst.instrument_id }}">Setpoint °C</label>
-                    <input
-                      class="pill pill-setpoint setpoint-input"
-                      id="sp-{{ inst.device_id }}-{{ inst.instrument_id }}"
-                      name="setpoint_c"
-                      type="number"
-                      step="0.1"
-                      min="-50"
-                      max="40"
-                      value="{% if inst.pending_setpoint is not none %}{{ inst.pending_setpoint }}{% elif inst.last_setpoint is not none %}{{ inst.last_setpoint }}{% endif %}"
-                      required
-                    >
-                    <span class="setpoint-unit">°C</span>
-                    <button class="setpoint-save" type="submit">Set</button>
-                    {% if inst.pending_setpoint is not none %}
-                    <span class="queued">queued</span>
-                    {% endif %}
+                    <div class="pill pill-setpoint setpoint-pill{% if inst.pending_setpoint is not none %} is-queued{% endif %}">
+                      <input
+                        class="setpoint-input"
+                        id="sp-{{ inst.device_id }}-{{ inst.instrument_id }}"
+                        name="setpoint_c"
+                        type="number"
+                        step="0.1"
+                        min="-50"
+                        max="40"
+                        value="{% if inst.pending_setpoint is not none %}{{ inst.pending_setpoint }}{% elif inst.last_setpoint is not none %}{{ inst.last_setpoint }}{% endif %}"
+                        required
+                      >
+                      <span class="setpoint-unit">°C</span>
+                    </div>
                   </form>
                 </dd>
               </div>

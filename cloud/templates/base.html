@@ -51,6 +51,18 @@
     </div>
   </div>
   <script>
+    document.querySelectorAll(".setpoint-inline").forEach(function (form) {
+      var input = form.querySelector(".setpoint-input");
+      if (!input) return;
+      var last = input.value;
+      function maybeSubmit() {
+        if (!input.checkValidity() || input.value === "" || input.value === last) return;
+        last = input.value;
+        form.submit();
+      }
+      input.addEventListener("change", maybeSubmit);
+      input.addEventListener("blur", maybeSubmit);
+    });
     setTimeout(function () {
       var el = document.activeElement;
       if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT")) return;

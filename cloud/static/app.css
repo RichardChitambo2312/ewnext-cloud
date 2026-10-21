@@ -522,54 +522,43 @@ button {
   border: 0;
 }
 
-.instrument-metrics > .metric-setpoint {
-  grid-template-columns: 1fr;
-  gap: 6px;
-}
-
-.metric-setpoint dd {
-  justify-content: flex-start;
-}
-
 .setpoint-inline {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
+  margin: 0;
+}
+
+.setpoint-pill {
+  gap: 2px;
+  min-width: 76px;
+  padding: 2px 8px 2px 6px;
+}
+
+.setpoint-pill.is-queued {
+  border-color: rgba(11, 110, 153, 0.35);
 }
 
 .setpoint-input {
-  width: 4.8rem;
-  min-width: 4.8rem;
-  text-align: center;
+  width: 3.6rem;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 2px 0;
+  text-align: right;
   font: inherit;
-  font-weight: 600;
+  font-weight: 500;
+  color: inherit;
   cursor: text;
 }
 
 .setpoint-input:focus {
-  border-color: var(--nav);
-  background: #fff;
+  outline: none;
 }
 
 .setpoint-unit {
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: var(--muted);
-}
-
-.setpoint-save {
-  border: 0;
-  background: var(--nav);
-  color: #fff;
-  border-radius: 999px;
-  padding: 5px 12px;
-  font-size: 0.75rem;
-  font-weight: 700;
-}
-
-.setpoint-save:hover {
-  background: var(--nav-hover);
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: inherit;
 }
 
 .primary-btn {
