@@ -1010,6 +1010,21 @@ th {
   color: var(--alarm);
 }
 
+.status.status-sub-active {
+  background: var(--ok-soft);
+  color: #15803d;
+}
+
+.status.status-sub-due {
+  background: var(--warn-soft);
+  color: #b45309;
+}
+
+.status.status-sub-locked {
+  background: var(--alarm-soft);
+  color: var(--alarm);
+}
+
 .login-body {
   min-height: 100vh;
   display: grid;
@@ -1533,6 +1548,22 @@ th {
   background: #22c55e;
 }
 
+.site-status-due {
+  color: #d97706;
+}
+
+.site-status-due .dot {
+  background: #f5a623;
+}
+
+.site-status-locked {
+  color: var(--alarm);
+}
+
+.site-status-locked .dot {
+  background: var(--alarm);
+}
+
 .site-chips {
   display: flex;
   flex-wrap: wrap;
@@ -1684,7 +1715,57 @@ th {
 }
 
 .device-admin-table {
-  min-width: 960px;
+  min-width: 1280px;
+}
+
+.device-admin-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+}
+
+.device-admin-table tr.is-locked .pen-btn,
+.device-admin-table tr.is-locked .name-input {
+  pointer-events: none;
+  opacity: 0.55;
+}
+
+.lock-banner,
+.due-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  margin: 0 0 16px;
+  font-size: 0.88rem;
+}
+
+.lock-banner {
+  background: var(--alarm-soft);
+  color: #991b1b;
+}
+
+.due-banner {
+  background: var(--warn-soft);
+  color: #92400e;
+}
+
+.lock-banner a,
+.due-banner a {
+  font-weight: 700;
+  color: inherit;
+}
+
+.device-locked .pen-btn,
+.device-locked .power-toggle,
+.device-locked .setpoint-inline,
+.device-locked .alarm-panel,
+.device-locked .name-inline {
+  pointer-events: none;
+  opacity: 0.55;
 }
 
 .device-admin-table .name-input {

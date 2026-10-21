@@ -26,6 +26,8 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
 MAX_INSTRUMENTS_PER_SITE = 15
+SUBSCRIPTION_DAYS = 365
+SUBSCRIPTION_DUE_DAYS = 30
 SETPOINT_REGISTER = 32769  # EWNext SEt, 0.1 C
 POWER_REGISTER = 4123  # Ronon / RoFFoFF command word
 POWER_ON_MASK = 4  # Ronon Device on
@@ -254,9 +256,13 @@ def init_db() -> None:
             )
             """
         )
+        _ensure_column(cur, "sites", "subscription_start", ts)
+        _ensure_column(cur, "sites", "subscription_until", ts)
+        _ensure_column(cur, "sites", "subscription_locked", "INTEGER DEFAULT 0")
         conn.commit()
         _ensure_org_tree(cur)
         _backfill_sites(cur)
+        _backfill_subscriptions(cur)
         conn.commit()
 
 
@@ -390,6 +396,10 @@ def site_display_name(store_name: Any, device_id: str) -> str:
     return name if name else device_id
 
 
+def subscription_period_end(start: datetime) -> datetime:
+    return start + timedelta(days=SUBSCRIPTION_DAYS)
+
+
 def ensure_site_record(cur, device_id: str) -> str:
     device_id = normalize_device_id(device_id)
     cur.execute(q("SELECT uid FROM sites WHERE device_id=?"), (device_id,))
@@ -397,12 +407,21 @@ def ensure_site_record(cur, device_id: str) -> str:
     existing = _row_get(row, "uid", 0) if row is not None else None
     if existing:
         return str(existing)
+    start = now_iso()
+    until = subscription_period_end(datetime.now(timezone.utc)).isoformat()
     for _ in range(8):
         uid = new_site_uid()
         try:
             cur.execute(
-                q("INSERT INTO sites (device_id, uid, store_name, created_at) VALUES (?, ?, ?, ?)"),
-                (device_id, uid, "", now_iso()),
+                q(
+                    """
+                    INSERT INTO sites (
+                        device_id, uid, store_name, created_at,
+                        subscription_start, subscription_until, subscription_locked
+                    ) VALUES (?, ?, ?, ?, ?, ?, 0)
+                    """
+                ),
+                (device_id, uid, "", start, start, until),
             )
             return uid
         except Exception:
@@ -413,8 +432,15 @@ def ensure_site_record(cur, device_id: str) -> str:
                 return str(existing)
     uid = "KV-" + uuid.uuid4().hex.upper()
     cur.execute(
-        q("INSERT INTO sites (device_id, uid, store_name, created_at) VALUES (?, ?, ?, ?)"),
-        (device_id, uid, "", now_iso()),
+        q(
+            """
+            INSERT INTO sites (
+                device_id, uid, store_name, created_at,
+                subscription_start, subscription_until, subscription_locked
+            ) VALUES (?, ?, ?, ?, ?, ?, 0)
+            """
+        ),
+        (device_id, uid, "", start, start, until),
     )
     return uid
 
@@ -435,27 +461,160 @@ def _backfill_sites(cur) -> None:
         ensure_site_record(cur, device_id)
 
 
+def decorate_subscription(row: dict, now: datetime | None = None) -> dict:
+    now = now or datetime.now(timezone.utc)
+    start = parse_ts(row.get("subscription_start")) or parse_ts(row.get("created_at")) or now
+    until = parse_ts(row.get("subscription_until")) or subscription_period_end(start)
+    expired = now > until
+    locked = bool(int(row.get("subscription_locked") or 0)) or expired
+    days_left = int((until - now).total_seconds() // 86400)
+    if locked:
+        status = "locked"
+        status_label = "Locked"
+    elif days_left <= SUBSCRIPTION_DUE_DAYS:
+        status = "due"
+        status_label = f"Renewal due in {max(days_left, 0)} day{'s' if days_left != 1 else ''}"
+    else:
+        status = "active"
+        status_label = "Active"
+    row.update(
+        {
+            "subscription_start": start.isoformat(),
+            "subscription_until": until.isoformat(),
+            "subscription_locked": locked,
+            "subscription_expired": expired,
+            "subscription_status": status,
+            "subscription_label": status_label,
+            "subscription_days_left": days_left,
+            "onboarded_label": format_when(start),
+            "renewal_label": format_when(until),
+        }
+    )
+    return row
+
+
+def _backfill_subscriptions(cur) -> None:
+    now = datetime.now(timezone.utc)
+    cur.execute(
+        "SELECT device_id, created_at, subscription_start, subscription_until, subscription_locked FROM sites"
+    )
+    for row in fetchall(cur):
+        start = parse_ts(row.get("subscription_start")) or parse_ts(row.get("created_at")) or now
+        until = parse_ts(row.get("subscription_until")) or subscription_period_end(start)
+        locked = 1 if now > until or int(row.get("subscription_locked") or 0) else 0
+        cur.execute(
+            q(
+                """
+                UPDATE sites
+                SET subscription_start=?, subscription_until=?, subscription_locked=?
+                WHERE device_id=?
+                """
+            ),
+            (start.isoformat(), until.isoformat(), locked, row.get("device_id")),
+        )
+        if locked:
+            cur.execute(
+                q(
+                    """
+                    UPDATE jobs SET status='cancelled', error=?, completed_at=?
+                    WHERE device_id=? AND status='pending'
+                    """
+                ),
+                ("subscription locked", now_iso(), row.get("device_id")),
+            )
+
+
+def refresh_site_subscriptions() -> None:
+    with db() as conn:
+        cur = conn.cursor()
+        _backfill_subscriptions(cur)
+
+
 def load_site_records(device_ids: list[str] | None = None) -> dict[str, dict]:
+    refresh_site_subscriptions()
     with db() as conn:
         cur = conn.cursor()
         for device_id in device_ids or []:
             if str(device_id or "").strip():
                 ensure_site_record(cur, str(device_id))
-        cur.execute("SELECT device_id, uid, store_name, created_at FROM sites")
+        cur.execute(
+            """
+            SELECT device_id, uid, store_name, created_at,
+                   subscription_start, subscription_until, subscription_locked
+            FROM sites
+            """
+        )
         rows = fetchall(cur)
+    now = datetime.now(timezone.utc)
     out: dict[str, dict] = {}
     for row in rows:
         device_id = str(row.get("device_id") or "").strip()
         if not device_id:
             continue
         store_name = str(row.get("store_name") or "").strip()
-        out[device_id] = {
+        rec = {
             "uid": str(row.get("uid") or ""),
             "store_name": store_name,
             "display_name": site_display_name(store_name, device_id),
             "created_at": row.get("created_at"),
+            "subscription_start": row.get("subscription_start"),
+            "subscription_until": row.get("subscription_until"),
+            "subscription_locked": row.get("subscription_locked"),
         }
+        out[device_id] = decorate_subscription(rec, now)
     return out
+
+
+def apply_subscription_lock(cur, device_id: str, now: datetime | None = None) -> bool:
+    device_id = normalize_device_id(device_id)
+    now = now or datetime.now(timezone.utc)
+    cur.execute(
+        q("SELECT subscription_until, subscription_locked FROM sites WHERE device_id=?"),
+        (device_id,),
+    )
+    row = cur.fetchone()
+    if row is None:
+        return False
+    until = parse_ts(_row_get(row, "subscription_until", 0))
+    locked = bool(int(_row_get(row, "subscription_locked", 1) or 0))
+    expired = bool(until and now > until)
+    if expired and not locked:
+        cur.execute(q("UPDATE sites SET subscription_locked=1 WHERE device_id=?"), (device_id,))
+        cur.execute(
+            q(
+                """
+                UPDATE jobs SET status='cancelled', error=?, completed_at=?
+                WHERE device_id=? AND status='pending'
+                """
+            ),
+            ("subscription locked", now_iso(), device_id),
+        )
+        locked = True
+    return locked or expired
+
+
+def site_is_subscription_locked(device_id: str) -> bool:
+    with db() as conn:
+        return apply_subscription_lock(conn.cursor(), device_id)
+
+
+def renew_device_subscription(device_id: str) -> dict:
+    device_id = normalize_device_id(device_id)
+    now = datetime.now(timezone.utc)
+    with db() as conn:
+        cur = conn.cursor()
+        ensure_site_record(cur, device_id)
+        cur.execute(q("SELECT subscription_until FROM sites WHERE device_id=?"), (device_id,))
+        row = cur.fetchone()
+        current_until = parse_ts(_row_get(row, "subscription_until", 0)) if row is not None else None
+        base = current_until if current_until and current_until > now else now
+        until = subscription_period_end(base)
+        cur.execute(
+            q("UPDATE sites SET subscription_until=?, subscription_locked=0 WHERE device_id=?"),
+            (until.isoformat(), device_id),
+        )
+    recs = load_site_records([device_id])
+    return recs.get(device_id) or {}
 
 
 def row_count(row: Any) -> int:
@@ -541,6 +700,14 @@ def is_manager(request: Request) -> bool:
     return normalize_role(request.session.get("role")) == "org_admin"
 
 
+def is_super_admin(request: Request | None) -> bool:
+    if request is None:
+        return False
+    if request.session.get("super_admin"):
+        return True
+    return bool(request.session.get("admin")) and request.session.get("uid") is None
+
+
 def session_name(request: Request) -> str:
     return str(request.session.get("name") or "Admin")
 
@@ -597,6 +764,24 @@ def require_site_access(request: Request, device_id: str) -> None:
         raise HTTPException(403, "no access to this site")
 
 
+def require_super_admin(request: Request) -> None:
+    require_admin(request)
+    if not is_super_admin(request):
+        raise HTTPException(403, "super admin only")
+
+
+def require_device_writable(request: Request, device_id: str) -> None:
+    require_site_access(request, device_id)
+    if site_is_subscription_locked(device_id):
+        raise HTTPException(403, "device locked: subscription expired")
+
+
+def require_subscription_view(request: Request, device_id: str) -> None:
+    require_site_access(request, device_id)
+    if site_is_subscription_locked(device_id) and not is_super_admin(request):
+        raise HTTPException(403, "device locked: subscription expired")
+
+
 def attach_session(ctx: dict, request: Request, page: str) -> dict:
     ctx.update(
         {
@@ -604,6 +789,7 @@ def attach_session(ctx: dict, request: Request, page: str) -> dict:
             "page": page,
             "admin_name": session_name(request),
             "is_manager": is_manager(request),
+            "is_super_admin": is_super_admin(request),
         }
     )
     return ctx
@@ -658,6 +844,7 @@ def start_user_session(request: Request, user: dict) -> None:
 def start_admin_session(request: Request) -> None:
     request.session.clear()
     request.session["admin"] = True
+    request.session["super_admin"] = True
     request.session["role"] = "org_admin"
     request.session["name"] = "Admin"
     request.session["uid"] = None
@@ -1667,6 +1854,8 @@ async def ingest(request: Request) -> JSONResponse:
         )
         jobs = fetchall(cur)
         uid = ensure_site_record(cur, device_id)
+        if apply_subscription_lock(cur, device_id):
+            jobs = []
 
     payload_jobs = [
         {
@@ -1783,6 +1972,10 @@ def dashboard_shell(request: Request | None = None) -> dict:
         rec = records.get(device_id) or {}
         widget["site_name"] = rec.get("display_name") or device_id
         widget["site_uid"] = rec.get("uid") or ""
+        widget["subscription_locked"] = bool(rec.get("subscription_locked"))
+        widget["subscription_status"] = rec.get("subscription_status") or "active"
+        widget["subscription_label"] = rec.get("subscription_label") or "Active"
+        widget["renewal_label"] = rec.get("renewal_label") or "—"
     sites: list[dict[str, Any]] = []
     by_site: dict[str, list[dict]] = {}
     for widget in widgets:
@@ -1794,25 +1987,42 @@ def dashboard_shell(request: Request | None = None) -> dict:
         rec = records.get(device_id) or {}
         store_name = rec.get("store_name") or ""
         device_online = any(w.get("online") for w in insts)
-        sites.append(
-            {
-                "device_id": device_id,
-                "store_name": store_name,
-                "display_name": rec.get("display_name") or device_id,
-                "uid": rec.get("uid") or "",
-                "device_online": device_online,
-                "device_status": "Online" if device_online else "Offline",
-                "instruments": insts,
-                "count": len(insts),
-                "max_n": MAX_INSTRUMENTS_PER_SITE,
-                "href": f"/sites/{encoded}",
-                **meta,
-            }
-        )
-    online_n = sum(1 for w in widgets if w.get("online"))
-    alarm_n = sum(1 for w in widgets if w.get("alarm"))
-    offline_n = len(widgets) - online_n
-    if not widgets:
+        locked = bool(rec.get("subscription_locked"))
+        row = {
+            "device_id": device_id,
+            "store_name": store_name,
+            "display_name": rec.get("display_name") or device_id,
+            "uid": rec.get("uid") or "",
+            "device_online": device_online,
+            "device_status": "Online" if device_online else "Offline",
+            "instruments": insts,
+            "count": len(insts),
+            "max_n": MAX_INSTRUMENTS_PER_SITE,
+            "href": f"/sites/{encoded}",
+            "subscription_locked": locked,
+            "subscription_expired": bool(rec.get("subscription_expired")),
+            "subscription_status": rec.get("subscription_status") or "active",
+            "subscription_label": rec.get("subscription_label") or "Active",
+            "onboarded_label": rec.get("onboarded_label") or "—",
+            "renewal_label": rec.get("renewal_label") or "—",
+            "subscription_days_left": rec.get("subscription_days_left"),
+            **meta,
+        }
+        if locked:
+            row["status_kind"] = "locked"
+            row["status_text"] = "Subscription locked"
+            row["device_status"] = "Locked"
+        elif rec.get("subscription_status") == "due" and row.get("status_kind") == "ok":
+            row["status_kind"] = "due"
+            row["status_text"] = rec.get("subscription_label") or "Renewal due"
+        sites.append(row)
+    visible = widgets
+    if request is not None and not is_super_admin(request):
+        visible = [w for w in widgets if not w.get("subscription_locked")]
+    online_n = sum(1 for w in visible if w.get("online"))
+    alarm_n = sum(1 for w in visible if w.get("alarm"))
+    offline_n = len(visible) - online_n
+    if not visible:
         health = {
             "level": "warning",
             "label": "Waiting",
@@ -1836,19 +2046,32 @@ def dashboard_shell(request: Request | None = None) -> dict:
             "label": "OK",
             "detail": f"{online_n} controller{'s' if online_n != 1 else ''} online",
         }
+    visible_sites = [row for row in sites if not row.get("subscription_locked")]
+    if request is not None and is_super_admin(request):
+        visible_sites = sites
+        kpis_widgets = widgets
+        kpis_sites = sites
+        feed_widgets = widgets
+    else:
+        kpis_widgets = visible
+        kpis_sites = visible_sites
+        feed_widgets = visible
     return {
-        "instruments": widgets,
-        "sites": sites,
+        "instruments": kpis_widgets,
+        "sites": visible_sites,
+        "all_sites": sites,
         "health": health,
         "online_n": online_n,
         "alarm_n": alarm_n,
-        "site_n": len(sites),
-        "kpis": compute_kpis(widgets, sites),
-        "alarm_feed": build_alarm_feed(widgets),
+        "site_n": len(visible_sites),
+        "kpis": compute_kpis(kpis_widgets, kpis_sites),
+        "alarm_feed": build_alarm_feed(feed_widgets),
         "site_names": {row["device_id"]: row["display_name"] for row in sites},
         "smtp_configured": smtp_configured(),
         "admin_name": session_name(request) if request is not None else "Admin",
         "is_manager": is_manager(request) if request is not None else True,
+        "is_super_admin": is_super_admin(request) if request is not None else False,
+        "device_locked": False,
     }
 
 
@@ -1892,15 +2115,16 @@ def site_detail(request: Request, device_id: str):
         return RedirectResponse("/login", status_code=302)
     if not can_access_site(request, device_id):
         raise HTTPException(403, "no access to this site")
+    require_subscription_view(request, device_id)
     ctx = dashboard_shell(request)
-    site = next((row for row in ctx["sites"] if row.get("device_id") == device_id), None)
+    site = next((row for row in (ctx.get("all_sites") or ctx["sites"]) if row.get("device_id") == device_id), None)
     if site is None:
         raise HTTPException(404, "site not found")
     scoped = list(site.get("instruments") or [])
     ctx["kpis"] = compute_kpis(scoped, [site])
     ctx["alarm_feed"] = build_alarm_feed(scoped)
     attach_session(ctx, request, "site")
-    ctx.update({"site": site, "sites": [site]})
+    ctx.update({"site": site, "sites": [site], "device_locked": bool(site.get("subscription_locked"))})
     return templates.TemplateResponse("site.html", ctx)
 
 
@@ -1911,6 +2135,7 @@ def _instrument_page_context(request: Request, instrument_id: int, device: str =
         raise HTTPException(404, "instrument not found")
     if not can_access_site(request, str(inst.get("device_id") or "")):
         raise HTTPException(403, "no access to this site")
+    require_subscription_view(request, str(inst.get("device_id") or ""))
     return ctx, inst
 
 
@@ -1924,6 +2149,7 @@ def instrument_page(request: Request, instrument_id: int, device: str = "", rang
     ctx.update(
         {
             "inst": inst,
+            "device_locked": bool(inst.get("subscription_locked")),
             "range_key": range_key,
             "ranges": [
                 ("1h", "1 hr"),
@@ -1947,6 +2173,7 @@ def instrument_alarm_history(request: Request, instrument_id: int, device: str =
     ctx.update(
         {
             "inst": inst,
+            "device_locked": bool(inst.get("subscription_locked")),
             "alarm_events": events,
             "alarm_active_n": sum(1 for e in events if e.get("active")),
             "alarm_total_n": len(events),
@@ -1967,7 +2194,7 @@ def instrument_history(request: Request, instrument_id: int, device: str = "", r
                 break
     if not device_id:
         raise HTTPException(404, "instrument not found")
-    require_site_access(request, device_id)
+    require_subscription_view(request, device_id)
     range_key = range if range in HISTORY_RANGES else "24h"
     return {
         "instrument_id": instrument_id,
@@ -2023,7 +2250,32 @@ def device_admin_page(request: Request):
     if not is_manager(request):
         return RedirectResponse("/", status_code=302)
     ctx = attach_session(dashboard_shell(request), request, "device-admin")
+    ctx["sites"] = ctx.get("all_sites") or ctx["sites"]
     return templates.TemplateResponse("device_admin.html", ctx)
+
+
+@app.post("/device/renew")
+def renew_device(
+    request: Request,
+    device_id: str = Form(...),
+    next: str = Form(""),
+):
+    require_super_admin(request)
+    device_id = normalize_device_id(device_id)
+    rec = renew_device_subscription(device_id)
+    if not rec:
+        raise HTTPException(404, "device not found")
+    if _wants_json(request):
+        return JSONResponse(
+            {
+                "ok": True,
+                "device_id": device_id,
+                "subscription_locked": False,
+                "subscription_until": rec.get("subscription_until"),
+                "renewal_label": rec.get("renewal_label"),
+            }
+        )
+    return _redirect_next(next or "/device-admin")
 
 
 def known_site_ids() -> list[str]:
@@ -2464,7 +2716,7 @@ def set_setpoint(
     setpoint_c: str = Form(...),
     next: str = Form(""),
 ):
-    require_site_access(request, device_id)
+    require_device_writable(request, device_id)
     value = as_float(str(setpoint_c).replace(",", "."))
     if value is None or value < -50 or value > 40:
         raise HTTPException(400, "setpoint out of range")
@@ -2489,7 +2741,7 @@ def set_site_name(
     name: str = Form(""),
     next: str = Form(""),
 ):
-    require_site_access(request, device_id)
+    require_device_writable(request, device_id)
     store_name = " ".join(str(name or "").split())
     if len(store_name) > NAME_MAX_LEN:
         raise HTTPException(400, "name must be 1 to 80 characters")
@@ -2524,7 +2776,7 @@ def set_instrument_alarms(
     alarm_notify_delay_min: str = Form(""),
     next: str = Form(""),
 ):
-    require_site_access(request, device_id)
+    require_device_writable(request, device_id)
     high = as_float(high_alarm_temp)
     delay = as_float(high_alarm_delay_min)
     reset = as_float(alarm_reset_temp)
@@ -2592,7 +2844,7 @@ def set_instrument_name(
     name: str = Form(...),
     next: str = Form(""),
 ):
-    require_site_access(request, device_id)
+    require_device_writable(request, device_id)
     label = " ".join(str(name or "").split())
     if not label or len(label) > NAME_MAX_LEN:
         raise HTTPException(400, "name must be 1 to 80 characters")
@@ -2623,7 +2875,7 @@ def set_power(
     power: int = Form(...),
     next: str = Form(""),
 ):
-    require_site_access(request, device_id)
+    require_device_writable(request, device_id)
     want_on = bool(int(power))
     raw = POWER_ON_MASK if want_on else POWER_OFF_MASK
     _queue_job(device_id, instrument_id, "power", POWER_REGISTER, raw, 1 if want_on else 0)

@@ -8,7 +8,7 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>{% block title %}Keyview Cloud{% endblock %}</title>
-  <link rel="stylesheet" href="/static/app.css?v=alarm4">
+  <link rel="stylesheet" href="/static/app.css?v=sub1">
   {% block extra_head %}{% endblock %}
 </head>
 <body>
@@ -67,7 +67,7 @@
       </div>
     </aside>
 
-    <div class="shell-content{% if page in ('dashboard', 'sites', 'users', 'organisations') %} is-overview{% endif %}">
+    <div class="shell-content{% if page in ('dashboard', 'sites', 'users', 'organisations') %} is-overview{% endif %}{% if device_locked %} device-locked{% endif %}">
       <header class="shell-topbar">
         <div class="top-health top-health-{{ health.level }}">
           <span class="top-health-label">{{ health.label }}</span>
@@ -79,6 +79,25 @@
       </header>
 
       <main class="shell-main">
+        {% if device_locked %}
+        <aside class="lock-banner" role="alert">
+          <strong>Device locked</strong>
+          <span>Subscription expired. This device is locked until a super admin renews it.</span>
+          {% if is_super_admin %}
+          <a href="/device-admin">Renew in Device Admin</a>
+          {% endif %}
+        </aside>
+        {% elif site is defined and site.subscription_status == 'due' %}
+        <aside class="due-banner" role="status">
+          <strong>Renewal due</strong>
+          <span>{{ site.subscription_label }}. Renewal date {{ site.renewal_label }}.</span>
+        </aside>
+        {% elif inst is defined and inst.subscription_status == 'due' %}
+        <aside class="due-banner" role="status">
+          <strong>Renewal due</strong>
+          <span>{{ inst.subscription_label }}. Renewal date {{ inst.renewal_label }}.</span>
+        </aside>
+        {% endif %}
         {% block content %}{% endblock %}
       </main>
     </div>

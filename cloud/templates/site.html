@@ -21,7 +21,7 @@
               {% set pen_label = "Edit store name" %}
               {% include "pen_btn.html" %}
             </form>
-            <p class="page-sub">{{ site.count }} / {{ site.max_n }} instruments · {{ site.online_n }} online{% if site.alarm_n %} · {{ site.alarm_n }} alarm{% endif %}. Rename the store with Enter. Toggle power to switch the controller on or off. Edit setpoint, then press Enter to confirm.</p>
+            <p class="page-sub">{{ site.count }} / {{ site.max_n }} instruments · {{ site.online_n }} online{% if site.alarm_n %} · {{ site.alarm_n }} alarm{% endif %} · Onboarded {{ site.onboarded_label }} · Renewal {{ site.renewal_label }}. Rename the store with Enter. Toggle power to switch the controller on or off. Edit setpoint, then press Enter to confirm.</p>
           </div>
         </div>
 

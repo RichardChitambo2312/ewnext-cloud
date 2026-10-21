@@ -5,7 +5,7 @@
           <div>
             <p class="eyebrow">Administration</p>
             <h1>Device Admin</h1>
-            <p class="page-sub">Onboarded gateways with Device ID, store name, connected instruments, online status, and the UID issued by the API.</p>
+            <p class="page-sub">Onboarded gateways with Device ID, store name, connected instruments, online status, UID, and the one-year subscription started on onboard. Only a super admin can renew or unlock a lapsed device.</p>
           </div>
         </div>
 
@@ -24,13 +24,16 @@
                   <th>Store name</th>
                   <th>Instruments connected</th>
                   <th>Device</th>
+                  <th>Onboarded</th>
+                  <th>Renewal due</th>
+                  <th>Subscription</th>
                   <th>Unique Identifier (UID)</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody>
                 {% for site in sites %}
-                <tr>
+                <tr{% if site.subscription_locked %} class="is-locked"{% endif %}>
                   <td><code>{{ site.device_id }}</code></td>
                   <td>
                     <form class="name-inline" method="post" action="/site/name" data-allow-blank="1">
@@ -53,8 +56,15 @@
                   </td>
                   <td>{{ site.count }} / {{ site.max_n }}</td>
                   <td>
-                    <span class="status {{ 'done' if site.device_online else 'error' }}">
+                    <span class="status {{ 'error' if site.subscription_locked else ('done' if site.device_online else 'error') }}">
                       {{ site.device_status }}
+                    </span>
+                  </td>
+                  <td>{{ site.onboarded_label }}</td>
+                  <td>{{ site.renewal_label }}</td>
+                  <td>
+                    <span class="status status-sub-{{ site.subscription_status }}">
+                      {{ site.subscription_label }}
                     </span>
                   </td>
                   <td>
@@ -65,7 +75,20 @@
                       {% endif %}
                     </div>
                   </td>
-                  <td><a class="site-pick-cta" href="{{ site.href }}">Open site</a></td>
+                  <td class="device-admin-actions">
+                    {% if is_super_admin %}
+                    <form method="post" action="/device/renew">
+                      <input type="hidden" name="device_id" value="{{ site.device_id }}">
+                      <input type="hidden" name="next" value="/device-admin">
+                      <button class="ghost-btn ghost-btn-sm" type="submit">
+                        {% if site.subscription_locked %}Unlock &amp; renew{% else %}Renew{% endif %}
+                      </button>
+                    </form>
+                    {% endif %}
+                    {% if not site.subscription_locked or is_super_admin %}
+                    <a class="site-pick-cta" href="{{ site.href }}">Open site</a>
+                    {% endif %}
+                  </td>
                 </tr>
                 {% endfor %}
               </tbody>
