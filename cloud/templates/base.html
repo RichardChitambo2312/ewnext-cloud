@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}EWNext Cloud{% endblock %}</title>
   <link rel="stylesheet" href="/static/app.css">
+  {% block extra_head %}{% endblock %}
 </head>
 <body>
   <div class="shell">
@@ -133,11 +134,13 @@
         });
       });
     });
+    {% if page != "instrument" %}
     setTimeout(function () {
       var el = document.activeElement;
       if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT")) return;
       location.reload();
     }, 20000);
+    {% endif %}
   </script>
 </body>
 </html>

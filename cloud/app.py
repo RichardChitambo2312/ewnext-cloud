@@ -4,13 +4,15 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import secrets
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
+from urllib.parse import quote
 
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -20,6 +22,14 @@ from starlette.middleware.sessions import SessionMiddleware
 
 SETPOINT_REGISTER = 32769  # EWNext SEt, 0.1 C
 PENDING_SETPOINT_TTL_SEC = 10
+HISTORY_RANGES = {
+    "1h": 3600,
+    "24h": 86400,
+    "2d": 172800,
+    "7d": 604800,
+    "1m": 2592000,
+}
+HISTORY_MAX_POINTS = 720
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -98,7 +108,8 @@ def init_db() -> None:
                 stale INTEGER NOT NULL DEFAULT 0,
                 device_ts INTEGER,
                 received_at {ts} NOT NULL,
-                created_at {ts}
+                created_at {ts},
+                setpoint REAL
             )
             """
         )
@@ -142,6 +153,10 @@ def init_db() -> None:
         _ensure_column(cur, "readings", "value", "TEXT")
         _ensure_column(cur, "readings", "raw_data", "TEXT")
         _ensure_column(cur, "readings", "created_at", ts)
+        _ensure_column(cur, "readings", "setpoint", "REAL")
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS readings_lookup ON readings (device_id, instrument_id, received_at)"
+        )
         conn.commit()
 
 
@@ -384,9 +399,65 @@ def decorate_instrument(row: dict, pending: dict | None) -> dict:
             "defrost_label": format_temp(inst.get("last_probe2")),
             "setpoint_label": format_temp(pending_value if pending_value is not None else setpoint),
             "pending_setpoint": pending_value,
+            "href": f"/instrument/{inst.get('instrument_id') or 0}?device={quote(str(inst.get('device_id') or ''), safe='')}",
         }
     )
     return inst
+
+
+def downsample_rows(rows: list[dict], max_points: int) -> list[dict]:
+    if len(rows) <= max_points:
+        return rows
+    step = max(1, math.ceil(len(rows) / max_points))
+    sampled = rows[::step]
+    if sampled and sampled[-1] is not rows[-1]:
+        sampled.append(rows[-1])
+    return sampled
+
+
+def history_point(row: dict) -> dict:
+    setpoint = row.get("setpoint")
+    if setpoint is None:
+        _, _, _, setpoint = decode_values(row.get("values_json"))
+    flags = decode_flags(row.get("flags"))
+    ts = row.get("received_at") or row.get("created_at")
+    if isinstance(ts, datetime):
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        t = ts.astimezone(timezone.utc).isoformat()
+    else:
+        t = str(ts or "")
+    return {
+        "t": t,
+        "temp": row.get("probe1"),
+        "defrost": row.get("probe2"),
+        "setpoint": setpoint,
+        "cooling": 1 if flags["cooling"] else 0,
+        "defrost_on": 1 if flags["defrost_active"] else 0,
+        "fan": 1 if flags["fan"] else 0,
+        "alarm": 1 if flags["alarm"] else 0,
+    }
+
+
+def load_history(device_id: str, instrument_id: int, range_key: str) -> list[dict]:
+    span = HISTORY_RANGES.get(range_key, HISTORY_RANGES["24h"])
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=span)).isoformat()
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            q(
+                """
+                SELECT probe1, probe2, setpoint, flags, values_json,
+                       COALESCE(created_at, received_at) AS received_at
+                FROM readings
+                WHERE device_id=? AND instrument_id=? AND received_at >= ?
+                ORDER BY received_at ASC
+                """
+            ),
+            (device_id, instrument_id, cutoff),
+        )
+        rows = fetchall(cur)
+    return downsample_rows([history_point(r) for r in rows], HISTORY_MAX_POINTS)
 
 
 def fetchall(cur) -> list[dict]:
@@ -441,8 +512,8 @@ async def ingest(request: Request) -> JSONResponse:
                 """
                 INSERT INTO readings (
                     device_id, instrument_id, server_name, register_address, value, raw_data,
-                    values_json, probe1, probe2, flags, stale, device_ts, received_at, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    values_json, probe1, probe2, setpoint, flags, stale, device_ts, received_at, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """
             ),
             (
@@ -455,6 +526,7 @@ async def ingest(request: Request) -> JSONResponse:
                 values_store,
                 probe1,
                 probe2,
+                live_setpoint,
                 flags,
                 1 if body.get("stale") else 0,
                 body.get("timestamp"),
@@ -681,6 +753,61 @@ def home(request: Request):
     return templates.TemplateResponse("index.html", ctx)
 
 
+@app.get("/instrument/{instrument_id}", response_class=HTMLResponse)
+def instrument_page(request: Request, instrument_id: int, device: str = "", range: str = "24h"):
+    if not logged_in(request):
+        return RedirectResponse("/login", status_code=302)
+    ctx = dashboard_shell()
+    device_id = (device or "").strip()
+    inst = None
+    for widget in ctx["instruments"]:
+        if int(widget.get("instrument_id") or 0) != instrument_id:
+            continue
+        if not device_id or str(widget.get("device_id")) == device_id:
+            inst = widget
+            break
+    if inst is None:
+        raise HTTPException(404, "instrument not found")
+    range_key = range if range in HISTORY_RANGES else "24h"
+    ctx.update(
+        {
+            "request": request,
+            "page": "instrument",
+            "inst": inst,
+            "range_key": range_key,
+            "ranges": [
+                ("1h", "1 hr"),
+                ("24h", "24 hr"),
+                ("2d", "2 days"),
+                ("7d", "7 days"),
+                ("1m", "1 month"),
+            ],
+        }
+    )
+    return templates.TemplateResponse("instrument.html", ctx)
+
+
+@app.get("/api/instruments/{instrument_id}/history")
+def instrument_history(request: Request, instrument_id: int, device: str = "", range: str = "24h"):
+    require_admin(request)
+    device_id = (device or "").strip()
+    if not device_id:
+        ctx = dashboard_shell()
+        for widget in ctx["instruments"]:
+            if int(widget.get("instrument_id") or 0) == instrument_id:
+                device_id = str(widget.get("device_id") or "")
+                break
+    if not device_id:
+        raise HTTPException(404, "instrument not found")
+    range_key = range if range in HISTORY_RANGES else "24h"
+    return {
+        "instrument_id": instrument_id,
+        "device_id": device_id,
+        "range": range_key,
+        "points": load_history(device_id, instrument_id, range_key),
+    }
+
+
 @app.get("/jobs", response_class=HTMLResponse)
 def jobs_page(request: Request):
     if not logged_in(request):
@@ -771,7 +898,10 @@ def set_setpoint(
                 "setpoint_c": setpoint_c,
             }
         )
-    return RedirectResponse("/", status_code=303)
+    nxt = (request.form.get("next") or "/").strip()
+    if not nxt.startswith("/") or nxt.startswith("//"):
+        nxt = "/"
+    return RedirectResponse(nxt, status_code=303)
 
 
 if __name__ == "__main__":

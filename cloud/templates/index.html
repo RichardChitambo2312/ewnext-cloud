@@ -19,6 +19,7 @@
 
           {% for inst in instruments %}
           <article class="instrument-card{% if inst.alarm %} status-alarm{% endif %}">
+            <a class="instrument-card-hit" href="{{ inst.href }}" aria-label="Open {{ inst.name }}"></a>
             <header class="instrument-card-head">
               <div>
                 <h3>{{ inst.name }}</h3>

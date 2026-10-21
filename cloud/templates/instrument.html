@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+{% block title %}{{ inst.name }} — EWNext Cloud{% endblock %}
+{% block extra_head %}
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+{% endblock %}
+{% block content %}
+        <div class="page-head">
+          <div>
+            <p class="eyebrow"><a href="/">Instruments</a></p>
+            <h1>{{ inst.name }}</h1>
+            <p class="page-sub">Address {{ inst.instrument_id }} · {{ inst.device_id }}</p>
+          </div>
+          <div class="status-icons" aria-label="Operating status">
+            <span class="si si-cool{% if inst.cooling %} is-on{% endif %}" title="CP1 cooling"></span>
+            <span class="si si-fan{% if inst.fan %} is-on{% endif %}" title="FAN"></span>
+            <span class="si si-defrost{% if inst.defrost_active %} is-on{% endif %}" title="DEF1 defrost"></span>
+            <span class="si si-alarm{% if inst.alarm %} is-on{% endif %}" title="Alarm"></span>
+          </div>
+        </div>
+
+        <section class="detail-metrics" aria-label="Live values">
+          <article class="detail-metric">
+            <span>Temperature</span>
+            <strong class="pill pill-temp">{{ inst.temperature_label }}</strong>
+          </article>
+          <article class="detail-metric">
+            <span>Defrost temp</span>
+            <strong class="pill pill-defrost">{{ inst.defrost_label }}</strong>
+          </article>
+          <article class="detail-metric">
+            <span>Setpoint value</span>
+            <form class="setpoint-inline" method="post" action="/setpoint">
+              <input type="hidden" name="device_id" value="{{ inst.device_id }}">
+              <input type="hidden" name="instrument_id" value="{{ inst.instrument_id }}">
+              <input type="hidden" name="next" value="{{ inst.href }}">
+              <label class="sr-only" for="sp-detail">Setpoint °C</label>
+              <div class="pill pill-setpoint setpoint-pill{% if inst.pending_setpoint is not none %} is-queued{% endif %}">
+                <input
+                  class="setpoint-input"
+                  id="sp-detail"
+                  name="setpoint_c"
+                  type="number"
+                  step="0.1"
+                  min="-50"
+                  max="40"
+                  value="{% if inst.pending_setpoint is not none %}{{ inst.pending_setpoint }}{% elif inst.last_setpoint is not none %}{{ inst.last_setpoint }}{% endif %}"
+                  required
+                >
+                <span class="setpoint-unit">°C</span>
+              </div>
+            </form>
+          </article>
+        </section>
+
+        <section class="chart-panel" data-instrument-id="{{ inst.instrument_id }}" data-device-id="{{ inst.device_id }}" data-range="{{ range_key }}">
+          <div class="chart-toolbar">
+            <h2>Trend</h2>
+            <div class="range-tabs" role="tablist" aria-label="Chart range">
+              {% for key, label in ranges %}
+              <button type="button" class="range-tab{% if key == range_key %} is-active{% endif %}" data-range="{{ key }}">{{ label }}</button>
+              {% endfor %}
+            </div>
+          </div>
+          <p class="chart-empty" hidden>No readings in this range yet.</p>
+          <div class="chart-wrap">
+            <canvas id="instrument-chart" aria-label="Temperature, defrost, setpoint and status"></canvas>
+          </div>
+        </section>
+        <script>
+          (function () {
+            var panel = document.querySelector(".chart-panel");
+            if (!panel || typeof Chart === "undefined") return;
+            var canvas = document.getElementById("instrument-chart");
+            var empty = document.querySelector(".chart-empty");
+            var chart = null;
+            var colors = {
+              temp: "#0284c7",
+              defrost: "#f97316",
+              setpoint: "#334155",
+              cooling: "#2563eb",
+              defrostOn: "#ea580c",
+              fan: "#22c55e",
+              alarm: "#ef4444"
+            };
+
+            function fmtTick(iso) {
+              var d = new Date(iso);
+              if (isNaN(d.getTime())) return iso;
+              return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+            }
+
+            function series(points, key) {
+              return points.map(function (p) {
+                var v = p[key];
+                return v == null ? null : Number(v);
+              });
+            }
+
+            function render(points) {
+              var hasData = points && points.length;
+              empty.hidden = !!hasData;
+              canvas.style.display = hasData ? "block" : "none";
+              if (!hasData) {
+                if (chart) { chart.destroy(); chart = null; }
+                return;
+              }
+              var labels = points.map(function (p) { return fmtTick(p.t); });
+              var data = {
+                labels: labels,
+                datasets: [
+                  { label: "Temperature", data: series(points, "temp"), borderColor: colors.temp, backgroundColor: "transparent", yAxisID: "y", tension: 0.2, pointRadius: 0, borderWidth: 2 },
+                  { label: "Defrost temp", data: series(points, "defrost"), borderColor: colors.defrost, backgroundColor: "transparent", yAxisID: "y", tension: 0.2, pointRadius: 0, borderWidth: 2 },
+                  { label: "Setpoint", data: series(points, "setpoint"), borderColor: colors.setpoint, backgroundColor: "transparent", yAxisID: "y", tension: 0, pointRadius: 0, borderWidth: 2, borderDash: [5, 4] },
+                  { label: "CP1 cooling", data: series(points, "cooling"), borderColor: colors.cooling, backgroundColor: "rgba(37,99,235,0.12)", yAxisID: "y1", stepped: true, pointRadius: 0, borderWidth: 2, fill: true },
+                  { label: "DEF1 defrost", data: series(points, "defrost_on"), borderColor: colors.defrostOn, backgroundColor: "rgba(234,88,12,0.10)", yAxisID: "y1", stepped: true, pointRadius: 0, borderWidth: 2, fill: true },
+                  { label: "FAN", data: series(points, "fan"), borderColor: colors.fan, backgroundColor: "rgba(34,197,94,0.10)", yAxisID: "y1", stepped: true, pointRadius: 0, borderWidth: 2, fill: true },
+                  { label: "Alarm", data: series(points, "alarm"), borderColor: colors.alarm, backgroundColor: "rgba(239,68,68,0.12)", yAxisID: "y1", stepped: true, pointRadius: 0, borderWidth: 2, fill: true }
+                ]
+              };
+              var options = {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: "index", intersect: false },
+                plugins: {
+                  legend: { position: "bottom", labels: { boxWidth: 12, usePointStyle: true } }
+                },
+                scales: {
+                  x: {
+                    ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 8, color: "#7a8494" },
+                    grid: { color: "rgba(226,230,236,0.8)" }
+                  },
+                  y: {
+                    title: { display: true, text: "°C" },
+                    ticks: { color: "#7a8494" },
+                    grid: { color: "rgba(226,230,236,0.8)" }
+                  },
+                  y1: {
+                    position: "right",
+                    min: 0,
+                    max: 1.05,
+                    title: { display: true, text: "Status" },
+                    ticks: { stepSize: 1, callback: function (v) { return v === 1 ? "On" : v === 0 ? "Off" : ""; } },
+                    grid: { drawOnChartArea: false }
+                  }
+                }
+              };
+              if (chart) {
+                chart.data = data;
+                chart.update();
+              } else {
+                chart = new Chart(canvas, { type: "line", data: data, options: options });
+              }
+            }
+
+            function loadRange(rangeKey) {
+              var url = "/api/instruments/" + encodeURIComponent(panel.dataset.instrumentId)
+                + "/history?device=" + encodeURIComponent(panel.dataset.deviceId)
+                + "&range=" + encodeURIComponent(rangeKey);
+              fetch(url, { credentials: "same-origin", headers: { Accept: "application/json" } })
+                .then(function (res) { return res.json(); })
+                .then(function (body) { render(body.points || []); })
+                .catch(function () { render([]); });
+            }
+
+            document.querySelectorAll(".range-tab").forEach(function (btn) {
+              btn.addEventListener("click", function () {
+                document.querySelectorAll(".range-tab").forEach(function (el) { el.classList.remove("is-active"); });
+                btn.classList.add("is-active");
+                var rangeKey = btn.getAttribute("data-range");
+                panel.dataset.range = rangeKey;
+                var next = new URL(window.location.href);
+                next.searchParams.set("range", rangeKey);
+                history.replaceState({}, "", next);
+                loadRange(rangeKey);
+              });
+            });
+
+            loadRange(panel.dataset.range || "24h");
+          })();
+        </script>
+{% endblock %}
