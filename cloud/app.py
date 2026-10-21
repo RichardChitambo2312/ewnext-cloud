@@ -159,14 +159,19 @@ def now_iso() -> str:
 
 
 def require_router_key(request: Request) -> None:
+    """Optional ingest auth. Data to Server may send only Content-Type.
+
+    If ROUTER_API_KEY is set and the caller sends X-API-Key / Bearer, the
+    values must match. Headerless posts from Teltonika Data to Server are allowed.
+    """
     expected = os.environ.get("ROUTER_API_KEY") or ""
-    if not expected:
-        raise HTTPException(503, "ROUTER_API_KEY is not configured")
     got = request.headers.get("X-API-Key") or ""
     auth = request.headers.get("Authorization") or ""
     if auth.lower().startswith("bearer "):
         got = got or auth.split(" ", 1)[1]
-    if not secrets.compare_digest(got, expected):
+    if not got:
+        return
+    if expected and not secrets.compare_digest(got, expected):
         raise HTTPException(401, "unauthorized")
 
 

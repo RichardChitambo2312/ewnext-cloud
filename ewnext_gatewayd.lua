@@ -169,9 +169,6 @@ local function publish(cfg, readings)
     if not cfg.cloud_enabled then
         return false, "cloud_disabled"
     end
-    if not cfg.api_key or #cfg.api_key == 0 then
-        return false, "api_key_missing"
-    end
     local url = join_url(cfg.api_url, cfg.telemetry_path)
     local last_err = "no_instruments"
     local ok_any = false
