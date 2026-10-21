@@ -1,52 +1,6 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>EWNext Cloud</title>
-  <link rel="stylesheet" href="/static/app.css">
-  <meta http-equiv="refresh" content="20">
-</head>
-<body>
-  <div class="shell">
-    <aside class="sidebar">
-      <div class="sidebar-brand">
-        <strong class="brand-word">EWNext</strong>
-        <span class="sidebar-mini">Cloud</span>
-      </div>
-      <nav class="sidebar-nav" aria-label="App">
-        <a class="side-link active" href="/">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
-          <span>Instruments</span>
-        </a>
-        <a class="side-link" href="#jobs">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 6h14M5 12h14M5 18h9" stroke-linecap="round"/></svg>
-          <span>Jobs</span>
-        </a>
-      </nav>
-      <div class="sidebar-foot">
-        <div class="side-user">
-          <strong>Admin</strong>
-          <span>EWNext Gateway</span>
-        </div>
-        <form method="post" action="/logout">
-          <button class="side-logout" type="submit">Sign out</button>
-        </form>
-      </div>
-    </aside>
-
-    <div class="shell-content">
-      <header class="shell-topbar">
-        <div class="top-health top-health-{{ health.level }}">
-          <span class="top-health-label">{{ health.label }}</span>
-          <span>{{ health.detail }}</span>
-        </div>
-        <div class="top-meta">
-          <span class="top-store">{{ online_n }} online · {{ alarm_n }} alarm</span>
-        </div>
-      </header>
-
-      <main class="shell-main">
+{% extends "base.html" %}
+{% block title %}EWNext Cloud — Instruments{% endblock %}
+{% block content %}
         <div class="page-head">
           <div>
             <p class="eyebrow">Live controllers</p>
@@ -59,7 +13,7 @@
           {% if not instruments %}
           <article class="empty">
             <h2>Waiting for gateway data</h2>
-            <p>Point the TRB245 worker at this service <code>api_url</code> and paste the Render Router API key. Keep writes locked on the router until the worker job handler is enabled.</p>
+            <p>Point the TRB245 worker at this service <code>api_url</code>. Keep writes locked on the router until the worker job handler is enabled.</p>
           </article>
           {% endif %}
 
@@ -133,47 +87,4 @@
           </article>
           {% endfor %}
         </section>
-
-        <section class="split" id="jobs">
-          <article class="panel">
-            <h2>Recent readings</h2>
-            <table>
-              <thead><tr><th>When</th><th>Addr</th><th>P1</th><th>P2</th></tr></thead>
-              <tbody>
-              {% for r in readings %}
-                <tr>
-                  <td class="small">{{ r.received_at }}</td>
-                  <td>{{ r.instrument_id }}</td>
-                  <td>{% if r.probe1 is not none %}{{ '%.1f'|format(r.probe1) }}{% else %}—{% endif %}</td>
-                  <td>{% if r.probe2 is not none %}{{ '%.1f'|format(r.probe2) }}{% else %}—{% endif %}</td>
-                </tr>
-              {% else %}
-                <tr><td colspan="4">No rows yet</td></tr>
-              {% endfor %}
-              </tbody>
-            </table>
-          </article>
-          <article class="panel">
-            <h2>Setpoint jobs</h2>
-            <table>
-              <thead><tr><th>ID</th><th>Addr</th><th>Value</th><th>Status</th></tr></thead>
-              <tbody>
-              {% for j in jobs %}
-                <tr>
-                  <td>{{ j.id }}</td>
-                  <td>{{ j.instrument_id }}</td>
-                  <td>{{ '%.1f'|format(j.display_value) }} °C</td>
-                  <td><span class="status {{ j.status }}">{{ j.status }}</span></td>
-                </tr>
-              {% else %}
-                <tr><td colspan="4">No jobs yet</td></tr>
-              {% endfor %}
-              </tbody>
-            </table>
-          </article>
-        </section>
-      </main>
-    </div>
-  </div>
-</body>
-</html>
+{% endblock %}

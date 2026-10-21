@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}EWNext Cloud{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <meta http-equiv="refresh" content="20">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <strong class="brand-word">EWNext</strong>
+        <span class="sidebar-mini">Cloud</span>
+      </div>
+      <nav class="sidebar-nav" aria-label="App">
+        <a class="side-link{% if page == 'instruments' %} active{% endif %}" href="/">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+          <span>Instruments</span>
+        </a>
+        <a class="side-link{% if page == 'jobs' %} active{% endif %}" href="/jobs">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 6h14M5 12h14M5 18h9" stroke-linecap="round"/></svg>
+          <span>Jobs</span>
+        </a>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="side-user">
+          <strong>Admin</strong>
+          <span>EWNext Gateway</span>
+        </div>
+        <form method="post" action="/logout">
+          <button class="side-logout" type="submit">Sign out</button>
+        </form>
+      </div>
+    </aside>
+
+    <div class="shell-content">
+      <header class="shell-topbar">
+        <div class="top-health top-health-{{ health.level }}">
+          <span class="top-health-label">{{ health.label }}</span>
+          <span>{{ health.detail }}</span>
+        </div>
+        <div class="top-meta">
+          <span class="top-store">{{ online_n }} online · {{ alarm_n }} alarm</span>
+        </div>
+      </header>
+
+      <main class="shell-main">
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+  </div>
+</body>
+</html>

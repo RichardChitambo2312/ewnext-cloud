@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}EWNext Cloud — Jobs{% endblock %}
+{% block content %}
+        <div class="page-head">
+          <div>
+            <p class="eyebrow">History</p>
+            <h1>Jobs</h1>
+            <p class="page-sub">Recent probe readings and queued setpoint writes.</p>
+          </div>
+        </div>
+
+        <section class="split" aria-label="Readings and jobs">
+          <article class="panel">
+            <h2>Recent readings</h2>
+            <table>
+              <thead><tr><th>When</th><th>Addr</th><th>P1</th><th>P2</th></tr></thead>
+              <tbody>
+              {% for r in readings %}
+                <tr>
+                  <td class="small">{{ r.received_at }}</td>
+                  <td>{{ r.instrument_id }}</td>
+                  <td>{% if r.probe1 is not none %}{{ '%.1f'|format(r.probe1) }}{% else %}—{% endif %}</td>
+                  <td>{% if r.probe2 is not none %}{{ '%.1f'|format(r.probe2) }}{% else %}—{% endif %}</td>
+                </tr>
+              {% else %}
+                <tr><td colspan="4">No rows yet</td></tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </article>
+          <article class="panel">
+            <h2>Setpoint jobs</h2>
+            <table>
+              <thead><tr><th>ID</th><th>Addr</th><th>Value</th><th>Status</th></tr></thead>
+              <tbody>
+              {% for j in jobs %}
+                <tr>
+                  <td>{{ j.id }}</td>
+                  <td>{{ j.instrument_id }}</td>
+                  <td>{{ '%.1f'|format(j.display_value) }} °C</td>
+                  <td><span class="status {{ j.status }}">{{ j.status }}</span></td>
+                </tr>
+              {% else %}
+                <tr><td colspan="4">No jobs yet</td></tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </article>
+        </section>
+{% endblock %}

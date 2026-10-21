@@ -526,10 +526,7 @@ async def job_result(job_id: int, request: Request) -> dict:
     return {"ok": True}
 
 
-@app.get("/", response_class=HTMLResponse)
-def home(request: Request):
-    if not logged_in(request):
-        return RedirectResponse("/login", status_code=302)
+def dashboard_shell() -> dict:
     with db() as conn:
         cur = conn.cursor()
         cur.execute(
@@ -542,17 +539,15 @@ def home(request: Request):
         )
         instruments = fetchall(cur)
         cur.execute(
-            "SELECT id, device_id, instrument_id, kind, display_value, status, created_at, error FROM jobs ORDER BY id DESC LIMIT 30"
+            """
+            SELECT id, device_id, instrument_id, kind, display_value, status
+            FROM jobs
+            WHERE status='pending' AND kind='setpoint'
+            """
         )
-        jobs = fetchall(cur)
-        cur.execute(
-            "SELECT device_id, instrument_id, probe1, probe2, received_at FROM readings ORDER BY id DESC LIMIT 40"
-        )
-        readings = fetchall(cur)
+        pending_jobs = fetchall(cur)
     pending_by_key = {
-        (j.get("device_id"), j.get("instrument_id")): j
-        for j in jobs
-        if j.get("status") == "pending" and j.get("kind") == "setpoint"
+        (j.get("device_id"), j.get("instrument_id")): j for j in pending_jobs
     }
     widgets = [
         decorate_instrument(
@@ -587,18 +582,47 @@ def home(request: Request):
             "label": "OK",
             "detail": f"{online_n} controller{'s' if online_n != 1 else ''} online",
         }
-    return templates.TemplateResponse(
-        "index.html",
+    return {
+        "instruments": widgets,
+        "health": health,
+        "online_n": online_n,
+        "alarm_n": alarm_n,
+    }
+
+
+@app.get("/", response_class=HTMLResponse)
+def home(request: Request):
+    if not logged_in(request):
+        return RedirectResponse("/login", status_code=302)
+    ctx = dashboard_shell()
+    ctx.update({"request": request, "page": "instruments"})
+    return templates.TemplateResponse("index.html", ctx)
+
+
+@app.get("/jobs", response_class=HTMLResponse)
+def jobs_page(request: Request):
+    if not logged_in(request):
+        return RedirectResponse("/login", status_code=302)
+    ctx = dashboard_shell()
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, device_id, instrument_id, kind, display_value, status, created_at, error FROM jobs ORDER BY id DESC LIMIT 30"
+        )
+        jobs = fetchall(cur)
+        cur.execute(
+            "SELECT device_id, instrument_id, probe1, probe2, received_at FROM readings ORDER BY id DESC LIMIT 40"
+        )
+        readings = fetchall(cur)
+    ctx.update(
         {
             "request": request,
-            "instruments": widgets,
+            "page": "jobs",
             "jobs": jobs,
             "readings": readings,
-            "health": health,
-            "online_n": online_n,
-            "alarm_n": alarm_n,
-        },
+        }
     )
+    return templates.TemplateResponse("jobs.html", ctx)
 
 
 @app.get("/login", response_class=HTMLResponse)
