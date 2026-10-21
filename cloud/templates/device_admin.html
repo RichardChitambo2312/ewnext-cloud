@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Keyview Cloud — Device Admin{% endblock %}
+{% block content %}
+        <div class="page-head">
+          <div>
+            <p class="eyebrow">Administration</p>
+            <h1>Device Admin</h1>
+            <p class="page-sub">Rename controllers, switch power, and adjust setpoints across every site you administer.</p>
+          </div>
+        </div>
+
+        {% if not sites %}
+        <article class="empty">
+          <h2>No devices yet</h2>
+          <p>Telemetry with a Device ID will appear here as site devices.</p>
+        </article>
+        {% endif %}
+
+        {% for site in sites %}
+        <section class="site-block" aria-label="Devices at {{ site.device_id }}">
+          <header class="site-head">
+            <div>
+              <p class="eyebrow">Site</p>
+              <h2>{{ site.device_id }}</h2>
+              <p class="site-meta">{{ site.count }} / {{ site.max_n }} devices · {{ site.online_n }} online{% if site.alarm_n %} · {{ site.alarm_n }} alarm{% endif %}</p>
+            </div>
+            <a class="site-pick-cta" href="{{ site.href }}">Open site</a>
+          </header>
+          {% include "instrument_cards.html" %}
+        </section>
+        {% endfor %}
+{% endblock %}

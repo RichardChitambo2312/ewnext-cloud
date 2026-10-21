@@ -1,15 +1,15 @@
 {% extends "base.html" %}
-{% block title %}Keyview Cloud — Jobs{% endblock %}
+{% block title %}Keyview Cloud — Raw Data{% endblock %}
 {% block content %}
         <div class="page-head">
           <div>
             <p class="eyebrow">History</p>
-            <h1>Jobs</h1>
+            <h1>Raw Data</h1>
             <p class="page-sub">Recent probe readings and queued controller writes.</p>
           </div>
         </div>
 
-        <section class="jobs-stack" aria-label="Readings and jobs">
+        <section class="jobs-stack" aria-label="Readings and write queue">
           <article class="panel">
             <h2>Recent readings</h2>
             <div class="table-wrap">
@@ -44,7 +44,7 @@
             </div>
           </article>
           <article class="panel">
-            <h2>Write jobs</h2>
+            <h2>Write queue</h2>
             <table>
               <thead><tr><th>ID</th><th>Site</th><th>Addr</th><th>Kind</th><th>Value</th><th>Status</th></tr></thead>
               <tbody>

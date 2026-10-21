@@ -8,7 +8,7 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>{% block title %}Keyview Cloud{% endblock %}</title>
-  <link rel="stylesheet" href="/static/app.css?v=orgs1">
+  <link rel="stylesheet" href="/static/app.css?v=nav2">
   {% block extra_head %}{% endblock %}
 </head>
 <body>
@@ -46,9 +46,13 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3"/><path d="M3.5 19c.6-3 2.8-5 5.5-5s4.9 2 5.5 5" stroke-linecap="round"/><circle cx="17" cy="9" r="2.4"/><path d="M21.5 19c-.4-2.3-1.9-4-4.5-4" stroke-linecap="round"/></svg>
           <span>Users</span>
         </a>
-        <a class="side-link{% if page == 'jobs' %} active{% endif %}" href="/jobs">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 6h14M5 12h14M5 18h9" stroke-linecap="round"/></svg>
-          <span>Jobs</span>
+        <a class="side-link{% if page == 'raw-data' %} active{% endif %}" href="/raw-data">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 6h14M5 12h14M5 18h9" stroke-linecap="round"/><path d="M14 18h5" stroke-linecap="round"/></svg>
+          <span>Raw Data</span>
+        </a>
+        <a class="side-link{% if page == 'device-admin' %} active{% endif %}" href="/device-admin">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 12h8M12 8v8" stroke-linecap="round"/></svg>
+          <span>Device Admin</span>
         </a>
         {% endif %}
       </nav>
@@ -95,6 +99,14 @@
       <a class="tab-link{% if page == 'users' %} active{% endif %}" href="/users">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3"/><path d="M3.5 19c.6-3 2.8-5 5.5-5s4.9 2 5.5 5" stroke-linecap="round"/><circle cx="17" cy="9" r="2.4"/><path d="M21.5 19c-.4-2.3-1.9-4-4.5-4" stroke-linecap="round"/></svg>
         <span>Users</span>
+      </a>
+      <a class="tab-link{% if page == 'raw-data' %} active{% endif %}" href="/raw-data">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 6h14M5 12h14M5 18h9" stroke-linecap="round"/></svg>
+        <span>Raw</span>
+      </a>
+      <a class="tab-link{% if page == 'device-admin' %} active{% endif %}" href="/device-admin">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 12h8M12 8v8" stroke-linecap="round"/></svg>
+        <span>Devices</span>
       </a>
       {% endif %}
     </nav>

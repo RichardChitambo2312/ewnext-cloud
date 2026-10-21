@@ -1400,8 +1400,7 @@ def instrument_history(request: Request, instrument_id: int, device: str = "", r
     }
 
 
-@app.get("/jobs", response_class=HTMLResponse)
-def jobs_page(request: Request):
+def _raw_data_page(request: Request):
     if not logged_in(request):
         return RedirectResponse("/login", status_code=302)
     if not is_manager(request):
@@ -1425,9 +1424,29 @@ def jobs_page(request: Request):
             """
         )
         readings = fetchall(cur)
-    attach_session(ctx, request, "jobs")
+    attach_session(ctx, request, "raw-data")
     ctx.update({"jobs": jobs, "readings": readings})
     return templates.TemplateResponse("jobs.html", ctx)
+
+
+@app.get("/raw-data", response_class=HTMLResponse)
+def raw_data_page(request: Request):
+    return _raw_data_page(request)
+
+
+@app.get("/jobs", response_class=HTMLResponse)
+def jobs_page(request: Request):
+    return RedirectResponse("/raw-data", status_code=302)
+
+
+@app.get("/device-admin", response_class=HTMLResponse)
+def device_admin_page(request: Request):
+    if not logged_in(request):
+        return RedirectResponse("/login", status_code=302)
+    if not is_manager(request):
+        return RedirectResponse("/", status_code=302)
+    ctx = attach_session(dashboard_shell(request), request, "device-admin")
+    return templates.TemplateResponse("device_admin.html", ctx)
 
 
 def known_site_ids() -> list[str]:

@@ -1745,7 +1745,15 @@ th {
   }
 
   .tabbar.has-manager {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    display: flex;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    grid-template-columns: none;
+  }
+
+  .tabbar.has-manager .tab-link {
+    flex: 1 0 auto;
+    min-width: 68px;
   }
 
   .tab-link {
