@@ -15,7 +15,7 @@
               <input class="name-input name-input-lg" id="nm-detail" name="name" value="{{ inst.name }}" maxlength="80" required>
             </form>
             <p class="page-sub">
-              Address {{ inst.instrument_id }} · {{ inst.device_id }}
+              Site {{ inst.device_id }} · Address {{ inst.instrument_id }}
               <span class="online-flag">
                 <span class="dot {% if inst.online %}dot-online{% else %}dot-offline{% endif %}"></span>
                 {{ "Online" if inst.online else "Offline" }}

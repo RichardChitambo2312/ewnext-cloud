@@ -302,6 +302,30 @@ button {
   gap: 12px;
 }
 
+.site-block {
+  margin-bottom: 22px;
+}
+
+.site-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.site-head h2 {
+  margin: 0;
+  font-size: 1.15rem;
+  letter-spacing: -0.02em;
+}
+
+.site-meta {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
 .instrument-card {
   position: relative;
   background: var(--panel);

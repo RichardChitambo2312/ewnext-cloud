@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
+MAX_INSTRUMENTS_PER_SITE = 15
 SETPOINT_REGISTER = 32769  # EWNext SEt, 0.1 C
 POWER_REGISTER = 4123  # Ronon / RoFFoFF command word
 POWER_ON_MASK = 4  # Ronon Device on
@@ -186,6 +187,35 @@ def _ensure_column(cur, table: str, column: str, typedef: str) -> None:
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def normalize_device_id(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return "unknown"
+    return raw[:64]
+
+
+def row_count(row: Any) -> int:
+    if row is None:
+        return 0
+    if isinstance(row, dict):
+        val = next(iter(row.values()))
+        return int(val or 0)
+    if hasattr(row, "keys"):
+        return int(row[0] or 0)
+    return int(row[0] or 0)
+
+
+def site_accepts_instrument(cur, device_id: str, instrument_id: int) -> bool:
+    cur.execute(
+        q("SELECT 1 FROM instruments WHERE device_id=? AND instrument_id=?"),
+        (device_id, instrument_id),
+    )
+    if cur.fetchone():
+        return True
+    cur.execute(q("SELECT COUNT(*) FROM instruments WHERE device_id=?"), (device_id,))
+    return row_count(cur.fetchone()) < MAX_INSTRUMENTS_PER_SITE
 
 
 def require_router_key(request: Request) -> None:
@@ -530,7 +560,7 @@ async def ingest(request: Request) -> JSONResponse:
     if not isinstance(body, dict):
         raise HTTPException(400, "invalid json")
 
-    device_id = str(body.get("device_id") or "unknown").strip() or "unknown"
+    device_id = normalize_device_id(body.get("device_id"))
     try:
         instrument_id = int(body.get("instrument_id"))
     except (TypeError, ValueError):
@@ -581,7 +611,8 @@ async def ingest(request: Request) -> JSONResponse:
         if last_setpoint is None and prev:
             last_setpoint = prev[0] if not isinstance(prev, dict) else prev.get("last_setpoint")
         stale = 1 if body.get("stale") else 0
-        if _is_pg():
+        if site_accepts_instrument(cur, device_id, instrument_id):
+          if _is_pg():
             cur.execute(
                 """
                 INSERT INTO instruments (
@@ -609,7 +640,7 @@ async def ingest(request: Request) -> JSONResponse:
                     received,
                 ),
             )
-        else:
+          else:
             cur.execute(
                 """
                 INSERT INTO instruments (
@@ -728,7 +759,7 @@ def dashboard_shell() -> dict:
             SELECT device_id, instrument_id, server_name, label, last_probe1, last_probe2,
                    last_setpoint, last_flags, last_stale, last_seen
             FROM instruments
-            ORDER BY instrument_id
+            ORDER BY device_id, instrument_id
             """
         )
         instruments = fetchall(cur)
@@ -757,6 +788,24 @@ def dashboard_shell() -> dict:
         )
         for inst in instruments
     ]
+    sites: list[dict[str, Any]] = []
+    by_site: dict[str, list[dict]] = {}
+    for widget in widgets:
+        key = str(widget.get("device_id") or "unknown")
+        by_site.setdefault(key, []).append(widget)
+    for device_id, insts in by_site.items():
+        site_online = sum(1 for w in insts if w.get("online"))
+        site_alarm = sum(1 for w in insts if w.get("alarm"))
+        sites.append(
+            {
+                "device_id": device_id,
+                "instruments": insts,
+                "count": len(insts),
+                "max_n": MAX_INSTRUMENTS_PER_SITE,
+                "online_n": site_online,
+                "alarm_n": site_alarm,
+            }
+        )
     online_n = sum(1 for w in widgets if w.get("online"))
     alarm_n = sum(1 for w in widgets if w.get("alarm"))
     offline_n = len(widgets) - online_n
@@ -786,9 +835,11 @@ def dashboard_shell() -> dict:
         }
     return {
         "instruments": widgets,
+        "sites": sites,
         "health": health,
         "online_n": online_n,
         "alarm_n": alarm_n,
+        "site_n": len(sites),
     }
 
 
@@ -887,7 +938,7 @@ def jobs_page(request: Request):
         jobs = fetchall(cur)
         cur.execute(
             """
-            SELECT id, instrument_id, register_address,
+            SELECT id, device_id, instrument_id, register_address,
                    COALESCE(value, values_json) AS value,
                    COALESCE(raw_data, values_json) AS raw_data,
                    COALESCE(created_at, received_at) AS created_at

@@ -47,7 +47,12 @@ local function read_cfg()
         baud_rate = tonumber(get("baud_rate", "9600")) or 9600,
         poll_interval = tonumber(get("poll_interval", "10")) or 10,
         stale_after_seconds = tonumber(get("stale_after_seconds", "25")) or 25,
-        device_id = get("device_id", hostname),
+        device_id = (function()
+            local id = get("device_id", "")
+            if type(id) == "string" then id = id:gsub("%s+", "") end
+            if not id or id == "" then return hostname end
+            return id
+        end)(),
         telemetry_path = get("telemetry_path", "/api/modbus")
     }
 end
@@ -311,6 +316,14 @@ while true do
     if cfg.poll_interval > 300 then cfg.poll_interval = 300 end
 
     local readings = latest_readings(cfg.stale_after_seconds)
+    table.sort(readings, function(a, b)
+        return (tonumber(a.instrument_id) or 0) < (tonumber(b.instrument_id) or 0)
+    end)
+    if #readings > 15 then
+        local trimmed = {}
+        for i = 1, 15 do trimmed[i] = readings[i] end
+        readings = trimmed
+    end
     local ok, err, jobs = true, "idle", {}
     if cfg.cloud_enabled then
         ok, err, jobs = publish(cfg, readings)
@@ -333,6 +346,7 @@ while true do
 
     write_state({
         ts = now(),
+        device_id = cfg.device_id,
         cloud_enabled = cfg.cloud_enabled,
         remote_reads_enabled = cfg.remote_reads_enabled,
         writes_locked = false,
