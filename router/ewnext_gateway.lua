@@ -23,7 +23,11 @@ local function valid_url(url)
         and not url:find("`", 1, true)
 end
 local function valid_device_id(id)
-    return type(id) == "string" and id:match("^[A-Za-z0-9][A-Za-z0-9._-]{1,31}$") ~= nil
+    if id == nil then return false end
+    id = tostring(id):gsub("%s+", "")
+    local n = #id
+    if n < 2 or n > 32 then return false end
+    return id:match("^[%w._%-]+$") ~= nil
 end
 local function saveopt(name, value)
     uci:set("ewnext_gateway", "main", name, tostring(value))
@@ -73,8 +77,8 @@ function M:SaveConfig()
         a.api_url = a.api_url:gsub("/+$", "")
         a.api_url = a.api_url:gsub("/api/modbus$", "")
     end
-    if type(a.device_id) == "string" then
-        a.device_id = a.device_id:gsub("%s+", "")
+    if a.device_id ~= nil then
+        a.device_id = tostring(a.device_id):gsub("%s+", "")
     end
 
     if not valid_device_id(a.device_id) then
