@@ -1,0 +1,6 @@
+__pycache__/
+.venv/
+.env
+*.db
+.DS_Store
+cloud/ewnext.db

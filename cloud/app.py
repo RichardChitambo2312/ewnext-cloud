@@ -1,0 +1,446 @@
+#!/usr/bin/env python3
+"""EWNext cloud: ingest gateway telemetry, store history, queue setpoint jobs."""
+
+from __future__ import annotations
+
+import json
+import os
+import secrets
+import sqlite3
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Iterator
+
+from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from starlette.middleware.sessions import SessionMiddleware
+
+SETPOINT_REGISTER = 32769  # EWNext SEt, 0.1 C
+TEMPLATES_DIR = Path(__file__).parent / "templates"
+STATIC_DIR = Path(__file__).parent / "static"
+
+app = FastAPI(title="EWNext Cloud")
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=os.environ.get("SESSION_SECRET") or secrets.token_hex(32),
+    same_site="lax",
+    https_only=os.environ.get("RENDER") == "true",
+)
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+def _pg() -> str | None:
+    url = os.environ.get("DATABASE_URL")
+    if not url:
+        return None
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://") :]
+    return url
+
+
+def _is_pg() -> bool:
+    return _pg() is not None
+
+
+@contextmanager
+def db() -> Iterator[Any]:
+    url = _pg()
+    if url:
+        import psycopg
+
+        conn = psycopg.connect(url)
+        try:
+            yield conn
+            conn.commit()
+        finally:
+            conn.close()
+    else:
+        conn = sqlite3.connect(Path(__file__).parent / "ewnext.db")
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def q(sql: str) -> str:
+    if _is_pg():
+        return sql.replace("?", "%s")
+    return sql
+
+
+def init_db() -> None:
+    serial = "SERIAL PRIMARY KEY" if _is_pg() else "INTEGER PRIMARY KEY AUTOINCREMENT"
+        ts = "TIMESTAMPTZ" if _is_pg() else "TEXT"
+        with db() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS readings (
+                    id {serial},
+                    device_id TEXT NOT NULL,
+                    instrument_id INTEGER NOT NULL,
+                    server_name TEXT,
+                    values_json TEXT NOT NULL,
+                probe1 REAL,
+                probe2 REAL,
+                flags INTEGER,
+                stale INTEGER NOT NULL DEFAULT 0,
+                device_ts INTEGER,
+                received_at {ts} NOT NULL
+            )
+            """
+        )
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS instruments (
+                device_id TEXT NOT NULL,
+                instrument_id INTEGER NOT NULL,
+                server_name TEXT,
+                last_probe1 REAL,
+                last_probe2 REAL,
+                last_setpoint REAL,
+                last_seen {ts},
+                PRIMARY KEY (device_id, instrument_id)
+            )
+            """
+        )
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS jobs (
+                id {serial},
+                device_id TEXT NOT NULL,
+                instrument_id INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                register INTEGER NOT NULL,
+                raw_value INTEGER NOT NULL,
+                display_value REAL NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                error TEXT,
+                created_at {ts} NOT NULL,
+                completed_at {ts}
+            )
+            """
+        )
+        conn.commit()
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def require_router_key(request: Request) -> None:
+    expected = os.environ.get("ROUTER_API_KEY") or ""
+    if not expected:
+        raise HTTPException(503, "ROUTER_API_KEY is not configured")
+    got = request.headers.get("X-API-Key") or ""
+    auth = request.headers.get("Authorization") or ""
+    if auth.lower().startswith("bearer "):
+        got = got or auth.split(" ", 1)[1]
+    if not secrets.compare_digest(got, expected):
+        raise HTTPException(401, "unauthorized")
+
+
+def logged_in(request: Request) -> bool:
+    return bool(request.session.get("admin"))
+
+
+def require_admin(request: Request) -> None:
+    if not logged_in(request):
+        raise HTTPException(401, "login required")
+
+
+def decode_values(values: Any) -> tuple[float | None, float | None, int | None]:
+    if isinstance(values, str):
+        try:
+            values = json.loads(values)
+        except json.JSONDecodeError:
+            values = []
+    if not isinstance(values, list) or not values:
+        return None, None, None
+    nums = []
+    for v in values:
+        try:
+            nums.append(float(v))
+        except (TypeError, ValueError):
+            nums.append(None)
+    probe1 = nums[0] / 10.0 if nums and nums[0] is not None else None
+    probe2 = nums[1] / 10.0 if len(nums) > 1 and nums[1] is not None else None
+    flags = int(nums[6]) if len(nums) > 6 and nums[6] is not None else None
+    return probe1, probe2, flags
+
+
+def fetchall(cur) -> list[dict]:
+    rows = cur.fetchall()
+    if not rows:
+        return []
+    if isinstance(rows[0], dict):
+        return list(rows)
+    if hasattr(rows[0], "keys"):
+        return [dict(r) for r in rows]
+    desc = [c.name for c in cur.description]
+    return [dict(zip(desc, r)) for r in rows]
+
+
+@app.on_event("startup")
+def on_startup() -> None:
+    init_db()
+
+
+@app.get("/health")
+def health() -> dict:
+    return {"ok": True, "service": "ewnext-cloud"}
+
+
+@app.post("/api/modbus")
+async def ingest(request: Request) -> JSONResponse:
+    require_router_key(request)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(400, "invalid json")
+    if not isinstance(body, dict):
+        raise HTTPException(400, "invalid json")
+
+    device_id = str(body.get("device_id") or "unknown").strip() or "unknown"
+    try:
+        instrument_id = int(body.get("instrument_id"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "instrument_id required")
+    values = body.get("values") or []
+    probe1, probe2, flags = decode_values(values)
+    received = now_iso()
+    values_store = json.dumps(values)
+
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            q(
+                """
+                INSERT INTO readings (
+                    device_id, instrument_id, server_name, values_json,
+                    probe1, probe2, flags, stale, device_ts, received_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """
+            ),
+            (
+                device_id,
+                instrument_id,
+                body.get("server_name"),
+                values_store,
+                probe1,
+                probe2,
+                flags,
+                1 if body.get("stale") else 0,
+                body.get("timestamp"),
+                received,
+            ),
+        )
+        cur.execute(
+            q("SELECT last_setpoint FROM instruments WHERE device_id=? AND instrument_id=?"),
+            (device_id, instrument_id),
+        )
+        prev = cur.fetchone()
+        last_setpoint = None
+        if prev:
+            last_setpoint = prev[0] if not isinstance(prev, dict) else prev.get("last_setpoint")
+        if _is_pg():
+            cur.execute(
+                """
+                INSERT INTO instruments (
+                    device_id, instrument_id, server_name, last_probe1, last_probe2,
+                    last_setpoint, last_seen
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (device_id, instrument_id) DO UPDATE SET
+                    server_name = EXCLUDED.server_name,
+                    last_probe1 = EXCLUDED.last_probe1,
+                    last_probe2 = EXCLUDED.last_probe2,
+                    last_seen = EXCLUDED.last_seen
+                """,
+                (
+                    device_id,
+                    instrument_id,
+                    body.get("server_name"),
+                    probe1,
+                    probe2,
+                    last_setpoint,
+                    received,
+                ),
+            )
+        else:
+            cur.execute(
+                """
+                INSERT INTO instruments (
+                    device_id, instrument_id, server_name, last_probe1, last_probe2,
+                    last_setpoint, last_seen
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (device_id, instrument_id) DO UPDATE SET
+                    server_name = excluded.server_name,
+                    last_probe1 = excluded.last_probe1,
+                    last_probe2 = excluded.last_probe2,
+                    last_seen = excluded.last_seen
+                """,
+                (
+                    device_id,
+                    instrument_id,
+                    body.get("server_name"),
+                    probe1,
+                    probe2,
+                    last_setpoint,
+                    received,
+                ),
+            )
+        cur.execute(
+            q(
+                """
+                SELECT id, instrument_id, kind, register, raw_value, display_value
+                FROM jobs
+                WHERE device_id=? AND status='pending'
+                ORDER BY id ASC
+                LIMIT 20
+                """
+            ),
+            (device_id,),
+        )
+        jobs = fetchall(cur)
+
+    payload_jobs = [
+        {
+            "id": j["id"],
+            "type": j["kind"],
+            "instrument_id": j["instrument_id"],
+            "register": j["register"],
+            "function": 16,
+            "value": j["raw_value"],
+            "display_value": j["display_value"],
+        }
+        for j in jobs
+    ]
+    return JSONResponse({"ok": True, "jobs": payload_jobs})
+
+
+@app.post("/api/modbus/jobs/{job_id}/result")
+async def job_result(job_id: int, request: Request) -> dict:
+    require_router_key(request)
+    body = await request.json()
+    ok = bool(body.get("ok", True))
+    error = body.get("error")
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(q("SELECT id, device_id, instrument_id, display_value, status FROM jobs WHERE id=?"), (job_id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "job not found")
+        job = dict(row) if hasattr(row, "keys") or isinstance(row, dict) else {
+            "id": row[0],
+            "device_id": row[1],
+            "instrument_id": row[2],
+            "display_value": row[3],
+            "status": row[4],
+        }
+        cur.execute(
+            q("UPDATE jobs SET status=?, error=?, completed_at=? WHERE id=?"),
+            ("done" if ok else "error", None if ok else str(error or "failed"), now_iso(), job_id),
+        )
+        if ok:
+            cur.execute(
+                q(
+                    """
+                    UPDATE instruments SET last_setpoint=?
+                    WHERE device_id=? AND instrument_id=?
+                    """
+                ),
+                (job["display_value"], job["device_id"], job["instrument_id"]),
+            )
+    return {"ok": True}
+
+
+@app.get("/", response_class=HTMLResponse)
+def home(request: Request):
+    if not logged_in(request):
+        return RedirectResponse("/login", status_code=302)
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT device_id, instrument_id, server_name, last_probe1, last_probe2, last_setpoint, last_seen FROM instruments ORDER BY instrument_id"
+        )
+        instruments = fetchall(cur)
+        cur.execute(
+            "SELECT id, device_id, instrument_id, kind, display_value, status, created_at, error FROM jobs ORDER BY id DESC LIMIT 30"
+        )
+        jobs = fetchall(cur)
+        cur.execute(
+            "SELECT device_id, instrument_id, probe1, probe2, received_at FROM readings ORDER BY id DESC LIMIT 40"
+        )
+        readings = fetchall(cur)
+    return templates.TemplateResponse(
+        "index.html",
+        {
+            "request": request,
+            "instruments": instruments,
+            "jobs": jobs,
+            "readings": readings,
+        },
+    )
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page(request: Request):
+    return templates.TemplateResponse("login.html", {"request": request, "error": None})
+
+
+@app.post("/login")
+def login_submit(request: Request, password: str = Form(...)):
+    expected = os.environ.get("ADMIN_PASSWORD") or ""
+    if not expected or not secrets.compare_digest(password, expected):
+        return templates.TemplateResponse(
+            "login.html",
+            {"request": request, "error": "Invalid password"},
+            status_code=401,
+        )
+    request.session["admin"] = True
+    return RedirectResponse("/", status_code=302)
+
+
+@app.post("/logout")
+def logout(request: Request):
+    request.session.clear()
+    return RedirectResponse("/login", status_code=302)
+
+
+@app.post("/setpoint")
+def set_setpoint(
+    request: Request,
+    instrument_id: int = Form(...),
+    device_id: str = Form(...),
+    setpoint_c: float = Form(...),
+):
+    require_admin(request)
+    if setpoint_c < -50 or setpoint_c > 40:
+        raise HTTPException(400, "setpoint out of range")
+    raw = int(round(setpoint_c * 10))
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            q(
+                """
+                INSERT INTO jobs (
+                    device_id, instrument_id, kind, register, raw_value, display_value, status, created_at
+                ) VALUES (?, ?, 'setpoint', ?, ?, ?, 'pending', ?)
+                """
+            ),
+            (device_id, instrument_id, SETPOINT_REGISTER, raw, setpoint_c, now_iso()),
+        )
+    return RedirectResponse("/", status_code=302)
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("app:app", host="0.0.0.0", port=int(os.environ.get("PORT", "8000")), reload=True)
