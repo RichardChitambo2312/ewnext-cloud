@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}EWNext Cloud{% endblock %}</title>
   <link rel="stylesheet" href="/static/app.css">
-  <meta http-equiv="refresh" content="20">
 </head>
 <body>
   <div class="shell">
@@ -51,5 +50,12 @@
       </main>
     </div>
   </div>
+  <script>
+    setTimeout(function () {
+      var el = document.activeElement;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT")) return;
+      location.reload();
+    }, 20000);
+  </script>
 </body>
 </html>
