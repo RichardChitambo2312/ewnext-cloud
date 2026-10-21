@@ -80,29 +80,10 @@
             </header>
 
             <div class="status-icons" aria-label="Operating status">
-              <span class="si{% if inst.cooling %} on-cool{% endif %}" title="CP1 cooling">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                  <path d="M12 2v20M4.9 6.5l14.2 11M4.9 17.5l14.2-11" stroke-linecap="round"/>
-                  <path d="M12 6l-2-2M12 6l2-2M12 18l-2 2M12 18l2 2" stroke-linecap="round"/>
-                </svg>
-              </span>
-              <span class="si{% if inst.fan %} on-fan{% endif %}" title="FAN">
-                <svg class="{% if inst.fan %}spin{% endif %}" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                  <circle cx="12" cy="12" r="2.5"/>
-                  <path d="M12 4c3 2 3 5 0 8 3-3 6-3 8 0-2-3-5-3-8 0 3 3 3 6 0 8 3-2 3-5 0-8-3 3-6 3-8 0 2 3 5 3 8 0-3-3-3-6 0-8z"/>
-                </svg>
-              </span>
-              <span class="si{% if inst.defrost_active %} on-defrost{% endif %}" title="DEF1 defrost">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                  <path d="M12 3s6 7 6 11a6 6 0 1 1-12 0c0-4 6-11 6-11z" stroke-linejoin="round"/>
-                </svg>
-              </span>
-              <span class="si{% if inst.alarm %} on-alarm{% endif %}" title="Alarm">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                  <path d="M6 9a6 6 0 0 1 12 0c0 7 3 7 3 7H3s3 0 3-7" stroke-linecap="round"/>
-                  <path d="M10 19a2 2 0 0 0 4 0"/>
-                </svg>
-              </span>
+              <span class="si si-cool{% if inst.cooling %} is-on{% endif %}" title="CP1 cooling" role="img" aria-label="Cooling {{ inst.cp1_label }}"></span>
+              <span class="si si-fan{% if inst.fan %} is-on{% endif %}" title="FAN" role="img" aria-label="Fan {{ inst.fan_label }}"></span>
+              <span class="si si-defrost{% if inst.defrost_active %} is-on{% endif %}" title="DEF1 defrost" role="img" aria-label="Defrost {{ inst.def1_label }}"></span>
+              <span class="si si-alarm{% if inst.alarm %} is-on{% endif %}" title="Alarm" role="img" aria-label="Alarm {% if inst.alarm %}ON{% else %}OFF{% endif %}"></span>
             </div>
 
             <dl class="instrument-metrics">
@@ -129,7 +110,7 @@
               </div>
               <div>
                 <dt>CP1 cooling</dt>
-                <dd><span class="pill {% if inst.cooling %}pill-on{% else %}pill-off{% endif %}">{{ inst.cp1_label }}</span></dd>
+                <dd><span class="pill {% if inst.cooling %}pill-on-cool{% else %}pill-off{% endif %}">{{ inst.cp1_label }}</span></dd>
               </div>
               <div>
                 <dt>DEF1 defrost</dt>
@@ -137,7 +118,7 @@
               </div>
               <div>
                 <dt>FAN</dt>
-                <dd><span class="pill {% if inst.fan %}pill-on{% else %}pill-off{% endif %}">{{ inst.fan_label }}</span></dd>
+                <dd><span class="pill {% if inst.fan %}pill-on-fan{% else %}pill-off{% endif %}">{{ inst.fan_label }}</span></dd>
               </div>
             </dl>
 

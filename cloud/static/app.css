@@ -23,8 +23,12 @@
   --alarm: #ef4444;
   --alarm-soft: #fdecec;
   --offline: #94a3b8;
-  --defrost: #e11d48;
-  --defrost-soft: #ffe4e8;
+  --icon-off: #9aa3af;
+  --cool-on: #2563eb;
+  --cool-soft: #dbeafe;
+  --fan-on: #22c55e;
+  --defrost: #f97316;
+  --defrost-soft: #ffedd5;
   --temp: #0284c7;
   --temp-soft: #e0f2fe;
   --setpoint-bg: #f1f5f9;
@@ -345,34 +349,53 @@ button {
 .status-icons {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  align-items: center;
+  gap: 10px;
   padding-top: 4px;
 }
 
 .si {
-  color: #cbd5e1;
-  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  display: inline-block;
+  flex: 0 0 22px;
+  background-color: var(--icon-off);
+  -webkit-mask: var(--si-icon) center / contain no-repeat;
+  mask: var(--si-icon) center / contain no-repeat;
 }
 
-.si.on-cool {
-  color: var(--brand-blue);
+.si-cool {
+  --si-icon: url("/static/icons/cooling.png");
 }
 
-.si.on-fan {
-  color: var(--ok);
+.si-fan {
+  --si-icon: url("/static/icons/fan.png");
 }
 
-.si.on-hum,
-.si.on-defrost {
-  color: var(--defrost);
+.si-defrost {
+  --si-icon: url("/static/icons/defrost.png");
 }
 
-.si.on-alarm {
-  color: var(--alarm);
+.si-alarm {
+  --si-icon: url("/static/icons/alarm.png");
 }
 
-.spin {
+.si-cool.is-on {
+  background-color: var(--cool-on);
+}
+
+.si-fan.is-on {
+  background-color: var(--fan-on);
   animation: fan-spin 1.6s linear infinite;
+}
+
+.si-defrost.is-on {
+  background-color: var(--defrost);
+}
+
+.si-alarm.is-on {
+  background-color: var(--alarm);
+  animation: pulse-alarm-icon 1.4s ease-out infinite;
 }
 
 .instrument-metrics {
@@ -430,7 +453,15 @@ button {
   border-color: rgba(51, 65, 85, 0.15);
 }
 
-.pill-on {
+.pill-on-cool {
+  color: var(--cool-on);
+  background: var(--cool-soft);
+  border-color: rgba(37, 99, 235, 0.28);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.pill-on-fan {
   color: #15803d;
   background: var(--ok-soft);
   border-color: rgba(34, 197, 94, 0.28);
@@ -439,15 +470,15 @@ button {
 }
 
 .pill-on-defrost {
-  color: var(--defrost);
+  color: #c2410c;
   background: var(--defrost-soft);
-  border-color: rgba(225, 29, 72, 0.22);
+  border-color: rgba(249, 115, 22, 0.28);
   font-weight: 700;
   letter-spacing: 0.04em;
 }
 
 .pill-off {
-  color: var(--muted);
+  color: var(--icon-off);
   background: var(--fog);
   border-color: var(--line);
   font-weight: 700;
@@ -663,6 +694,16 @@ th {
 @keyframes fan-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes pulse-alarm-icon {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
   }
 }
 

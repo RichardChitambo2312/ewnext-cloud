@@ -309,11 +309,9 @@ def decorate_instrument(row: dict, pending: dict | None) -> dict:
             "cooling": cooling,
             "fan": cooling,
             "humidity": False,
-            "alarm": not online,
+            "alarm": False,
             "defrost_active": False,
         }
-    if not online:
-        flags["alarm"] = True
     pending_value = pending.get("display_value") if pending else None
     inst.update(
         {
