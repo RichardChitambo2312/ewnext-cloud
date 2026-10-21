@@ -260,10 +260,11 @@ def instrument_online(row: dict) -> bool:
 
 
 def decode_flags(flags: Any) -> dict[str, bool]:
-    """Map EWNext status word to CP1 / DEF1 / FAN.
+    """Map EWNext analog RAM 4115 to CP1 / DEF1 / FAN / ALM.
 
-    Live 4116 values use the high LED bits (8/9/10). If those are all
-    clear, fall back to the low output bits (0/1/2).
+    Eliwell Table of Modbus Resources (EWNext Optimized):
+      STD-BY=1, CP1=2, DEF1=16, FAN=64, ALM=256.
+    Live word 322 = CP1 + FAN + ALM.
     """
     try:
         bits = int(flags)
@@ -275,20 +276,15 @@ def decode_flags(flags: Any) -> dict[str, bool]:
             "alarm": False,
             "defrost_active": False,
         }
-    high = bits & 0x0700
-    if high:
-        cooling = bool(bits & 0x0100)  # CP1
-        defrost_active = bool(bits & 0x0200)  # DEF1
-        fan = bool(bits & 0x0400)  # FAN
-    else:
-        cooling = bool(bits & 0x01)
-        defrost_active = bool(bits & 0x02)
-        fan = bool(bits & 0x04)
+    cooling = bool(bits & 0x0002)  # CP1
+    defrost_active = bool(bits & 0x0010)  # DEF1
+    fan = bool(bits & 0x0040)  # FAN
+    alarm = bool(bits & 0x0100)  # ALM
     return {
         "cooling": cooling,
         "defrost_active": defrost_active,
         "fan": fan,
-        "alarm": bool(bits & 0x08),
+        "alarm": alarm,
         "humidity": defrost_active,
     }
 
@@ -307,7 +303,7 @@ def decorate_instrument(row: dict, pending: dict | None) -> dict:
         )
         flags = {
             "cooling": cooling,
-            "fan": cooling,
+            "fan": False,
             "humidity": False,
             "alarm": False,
             "defrost_active": False,
