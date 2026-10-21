@@ -604,6 +604,12 @@ button {
   color: var(--alarm);
 }
 
+.status-chip.is-wait.chip-alarm {
+  background: var(--warn-soft);
+  border-color: rgba(245, 166, 35, 0.35);
+  color: #b45309;
+}
+
 .si {
   width: 24px;
   height: 24px;
@@ -647,6 +653,10 @@ button {
 .si-alarm.is-on {
   background-color: var(--alarm);
   animation: pulse-alarm-icon 1.4s ease-out infinite;
+}
+
+.si-alarm.is-wait {
+  background-color: #f5a623;
 }
 
 .instrument-metrics {
@@ -1039,6 +1049,44 @@ th {
 
 .detail-metric strong {
   font-size: 1rem;
+}
+
+.alarm-panel {
+  background: var(--panel);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 16px 18px 18px;
+  margin-bottom: 16px;
+}
+
+.alarm-panel h2 {
+  margin: 0 0 6px;
+  font-size: 1rem;
+}
+
+.alarm-hint {
+  margin: 0 0 12px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.alarm-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
+  margin-bottom: 12px;
+}
+
+.alarm-grid .alarm-hint {
+  margin: 6px 0 0;
+}
+
+.alarm-set-note {
+  margin: 10px 0 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--alarm);
 }
 
 .chart-panel {
@@ -1944,7 +1992,8 @@ th {
 
   .name-input,
   .setpoint-input,
-  .login-card input {
+  .login-card input,
+  .alarm-form input {
     font-size: 16px;
   }
 
@@ -1974,6 +2023,10 @@ th {
   .detail-metrics {
     grid-template-columns: 1fr;
     gap: 8px;
+  }
+
+  .alarm-grid {
+    grid-template-columns: 1fr;
   }
 
   .detail-metric {

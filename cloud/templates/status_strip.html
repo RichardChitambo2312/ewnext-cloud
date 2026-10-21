@@ -20,11 +20,11 @@
       <span class="status-chip-state">{{ inst.def1_label }}</span>
     </span>
   </div>
-  <div class="status-chip chip-alarm{% if inst.alarm %} is-on{% endif %}" title="Alarm">
-    <span class="si si-alarm{% if inst.alarm %} is-on{% endif %}" aria-hidden="true"></span>
+  <div class="status-chip chip-alarm{% if inst.alarm %} is-on{% elif inst.alarm_pending %} is-wait{% endif %}" title="Cloud high-temperature alarm">
+    <span class="si si-alarm{% if inst.alarm %} is-on{% elif inst.alarm_pending %} is-wait{% endif %}" aria-hidden="true"></span>
     <span class="status-chip-meta">
       <span class="status-chip-name">Alarm</span>
-      <span class="status-chip-state">{% if inst.alarm %}ON{% else %}OFF{% endif %}</span>
+      <span class="status-chip-state">{{ inst.alarm_label }}</span>
     </span>
   </div>
 </div>

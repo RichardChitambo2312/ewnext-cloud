@@ -80,6 +80,9 @@
                 </dd>
               </div>
             </dl>
+            {% if inst.alarm_configured %}
+            <p class="alarm-set-note">High alarm {{ inst.alarm_high_temp_input }}°C</p>
+            {% endif %}
           </article>
           {% endfor %}
         </div>

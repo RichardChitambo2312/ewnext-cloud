@@ -9,8 +9,10 @@ import json
 import math
 import os
 import secrets
+import smtplib
 import sqlite3
 import uuid
+from email.message import EmailMessage
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -162,6 +164,15 @@ def init_db() -> None:
         _ensure_column(cur, "instruments", "last_flags", "INTEGER")
         _ensure_column(cur, "instruments", "last_stale", "INTEGER DEFAULT 0")
         _ensure_column(cur, "instruments", "label", "TEXT")
+        _ensure_column(cur, "instruments", "alarm_high_temp", "REAL")
+        _ensure_column(cur, "instruments", "alarm_high_delay_min", "REAL")
+        _ensure_column(cur, "instruments", "alarm_reset_temp", "REAL")
+        _ensure_column(cur, "instruments", "alarm_notify_delay_min", "REAL")
+        _ensure_column(cur, "instruments", "alarm_high_since", ts)
+        _ensure_column(cur, "instruments", "alarm_active", "INTEGER DEFAULT 0")
+        _ensure_column(cur, "instruments", "alarm_active_since", ts)
+        _ensure_column(cur, "instruments", "alarm_email_sent", "INTEGER DEFAULT 0")
+        _ensure_column(cur, "readings", "cloud_alarm", "INTEGER DEFAULT 0")
         _ensure_column(cur, "readings", "register_address", "INTEGER")
         _ensure_column(cur, "readings", "value", "TEXT")
         _ensure_column(cur, "readings", "raw_data", "TEXT")
@@ -664,6 +675,197 @@ def as_int(value: Any) -> int | None:
         return None
 
 
+def as_float(value: Any) -> float | None:
+    if value is None or value is False:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def format_alarm_input(value: Any) -> str:
+    n = as_float(value)
+    if n is None:
+        return ""
+    if abs(n - round(n)) < 1e-9:
+        return str(int(round(n)))
+    return f"{n:.1f}"
+
+
+INSTRUMENT_SELECT = """
+            SELECT device_id, instrument_id, server_name, label, last_probe1, last_probe2,
+                   last_setpoint, last_flags, last_stale, last_seen,
+                   alarm_high_temp, alarm_high_delay_min, alarm_reset_temp, alarm_notify_delay_min,
+                   alarm_high_since, alarm_active, alarm_active_since, alarm_email_sent
+            FROM instruments
+"""
+
+
+def smtp_configured() -> bool:
+    return bool((os.environ.get("SMTP_HOST") or "").strip() and (os.environ.get("SMTP_FROM") or os.environ.get("SMTP_USER") or "").strip())
+
+
+def alarm_email_recipients(device_id: str) -> list[str]:
+    device_id = str(device_id or "").strip()
+    out: list[str] = []
+    extra = normalize_email(os.environ.get("ALARM_NOTIFY_EMAIL") or os.environ.get("ADMIN_EMAIL") or "")
+    if extra:
+        out.append(extra)
+    for user in load_app_users():
+        mail = normalize_email(user.get("email"))
+        if not mail:
+            continue
+        portfolio = user_portfolio(user)
+        if portfolio is None or device_id in portfolio:
+            if mail not in out:
+                out.append(mail)
+    return out
+
+
+def send_alarm_email(inst: dict, temp: float, high: float) -> bool:
+    if not smtp_configured():
+        return False
+    host = (os.environ.get("SMTP_HOST") or "").strip()
+    port = as_int(os.environ.get("SMTP_PORT")) or 587
+    user = os.environ.get("SMTP_USER") or ""
+    password = os.environ.get("SMTP_PASSWORD") or ""
+    from_addr = (os.environ.get("SMTP_FROM") or user or "").strip()
+    starttls = (os.environ.get("SMTP_STARTTLS") or "1").strip().lower() not in ("0", "false", "no")
+    recipients = alarm_email_recipients(str(inst.get("device_id") or ""))
+    if not from_addr or not recipients:
+        return False
+    name = display_name(inst.get("label"), inst.get("server_name"), inst.get("instrument_id") or 0)
+    site = str(inst.get("site_name") or inst.get("device_id") or "")
+    subject = f"Keyview alarm: {name} at {site}"
+    body = (
+        f"{name} is in high-temperature alarm.\n\n"
+        f"Site: {site}\n"
+        f"Device ID: {inst.get('device_id')}\n"
+        f"Address: {inst.get('instrument_id')}\n"
+        f"Temperature: {format_temp(temp)}\n"
+        f"High alarm: {format_temp(high)}\n"
+        f"Time (UTC): {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}\n"
+    )
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = from_addr
+    msg["To"] = ", ".join(recipients)
+    msg.set_content(body)
+    try:
+        if port == 465:
+            with smtplib.SMTP_SSL(host, port, timeout=12) as smtp:
+                if user:
+                    smtp.login(user, password)
+                smtp.send_message(msg)
+        else:
+            with smtplib.SMTP(host, port, timeout=12) as smtp:
+                if starttls:
+                    smtp.starttls()
+                if user:
+                    smtp.login(user, password)
+                smtp.send_message(msg)
+        return True
+    except Exception:
+        return False
+
+
+def persist_cloud_alarm(cur, inst: dict, active: bool, high_since: datetime | None, active_since: datetime | None, emailed: bool) -> None:
+    cur.execute(
+        q(
+            """
+            UPDATE instruments SET
+                alarm_active=?, alarm_high_since=?, alarm_active_since=?, alarm_email_sent=?
+            WHERE device_id=? AND instrument_id=?
+            """
+        ),
+        (
+            1 if active else 0,
+            high_since.isoformat() if high_since else None,
+            active_since.isoformat() if active_since else None,
+            1 if emailed else 0,
+            inst.get("device_id"),
+            inst.get("instrument_id"),
+        ),
+    )
+
+
+def apply_cloud_alarm(cur, inst: dict, now: datetime | None = None) -> dict:
+    now = now or datetime.now(timezone.utc)
+    high = as_float(inst.get("alarm_high_temp"))
+    delay_min = as_float(inst.get("alarm_high_delay_min")) or 0.0
+    reset = as_float(inst.get("alarm_reset_temp"))
+    notify_min = as_float(inst.get("alarm_notify_delay_min")) or 0.0
+    temp = as_float(inst.get("last_probe1"))
+    active = bool(int(inst.get("alarm_active") or 0))
+    high_since = parse_ts(inst.get("alarm_high_since"))
+    active_since = parse_ts(inst.get("alarm_active_since"))
+    emailed = bool(int(inst.get("alarm_email_sent") or 0))
+    pending = False
+
+    if high is None:
+        next_active, next_high_since, next_active_since, next_emailed = False, None, None, False
+    else:
+        if reset is None:
+            reset = high
+        delay_sec = max(0.0, delay_min) * 60.0
+        notify_sec = max(0.0, notify_min) * 60.0
+        next_active = active
+        next_high_since = high_since
+        next_active_since = active_since
+        next_emailed = emailed
+        if temp is None:
+            if not active:
+                next_high_since = None
+        elif active:
+            if temp <= reset:
+                next_active = False
+                next_high_since = None
+                next_active_since = None
+                next_emailed = False
+        elif temp > high:
+            if next_high_since is None:
+                next_high_since = now
+            elapsed = (now - next_high_since).total_seconds()
+            if elapsed >= delay_sec:
+                next_active = True
+                next_active_since = now
+                next_emailed = False
+            else:
+                pending = True
+        else:
+            next_high_since = None
+
+    persist_cloud_alarm(cur, inst, next_active, next_high_since, next_active_since, next_emailed)
+    if next_active and not next_emailed and next_active_since is not None:
+        notify_sec = max(0.0, notify_min) * 60.0
+        if (now - next_active_since).total_seconds() >= notify_sec:
+            if send_alarm_email(inst, temp if temp is not None else high or 0.0, high or 0.0):
+                next_emailed = True
+                persist_cloud_alarm(cur, inst, next_active, next_high_since, next_active_since, True)
+
+    inst["alarm_active"] = 1 if next_active else 0
+    inst["alarm_high_since"] = next_high_since.isoformat() if next_high_since else None
+    inst["alarm_active_since"] = next_active_since.isoformat() if next_active_since else None
+    inst["alarm_email_sent"] = 1 if next_emailed else 0
+    inst["alarm_pending"] = pending
+    return inst
+
+
+def refresh_cloud_alarms(rows: list[dict]) -> list[dict]:
+    if not rows:
+        return rows
+    now = datetime.now(timezone.utc)
+    with db() as conn:
+        cur = conn.cursor()
+        for row in rows:
+            apply_cloud_alarm(cur, row, now)
+    return rows
+
+
 def reading_register_address(body: dict) -> int | None:
     for key in ("register_address", "start_address", "address", "first_reg"):
         n = as_int(body.get(key))
@@ -982,7 +1184,18 @@ def decorate_instrument(
             "fan": flags["fan"],
             "humidity": flags["humidity"],
             "defrost_active": flags["defrost_active"],
-            "alarm": flags["alarm"],
+            "alarm": bool(int(inst.get("alarm_active") or 0)),
+            "alarm_pending": bool(inst.get("alarm_pending")),
+            "alarm_label": "ON" if int(inst.get("alarm_active") or 0) else ("WAIT" if inst.get("alarm_pending") else "OFF"),
+            "alarm_configured": as_float(inst.get("alarm_high_temp")) is not None,
+            "alarm_high_temp": as_float(inst.get("alarm_high_temp")),
+            "alarm_high_delay_min": as_float(inst.get("alarm_high_delay_min")),
+            "alarm_reset_temp": as_float(inst.get("alarm_reset_temp")),
+            "alarm_notify_delay_min": as_float(inst.get("alarm_notify_delay_min")),
+            "alarm_high_temp_input": format_alarm_input(inst.get("alarm_high_temp")),
+            "alarm_high_delay_input": format_alarm_input(inst.get("alarm_high_delay_min")),
+            "alarm_reset_temp_input": format_alarm_input(inst.get("alarm_reset_temp")),
+            "alarm_notify_delay_input": format_alarm_input(inst.get("alarm_notify_delay_min")),
             "standby": flags["standby"],
             "live_powered": live_on,
             "powered": live_on if pending_on is None else pending_on,
@@ -1031,7 +1244,7 @@ def history_point(row: dict) -> dict:
         "cooling": 1 if flags["cooling"] else 0,
         "defrost_on": 1 if flags["defrost_active"] else 0,
         "fan": 1 if flags["fan"] else 0,
-        "alarm": 1 if flags["alarm"] else 0,
+        "alarm": 1 if int(row.get("cloud_alarm") or 0) else 0,
     }
 
 
@@ -1043,7 +1256,7 @@ def load_history(device_id: str, instrument_id: int, range_key: str) -> list[dic
         cur.execute(
             q(
                 """
-                SELECT probe1, probe2, setpoint, flags, values_json,
+                SELECT probe1, probe2, setpoint, flags, values_json, cloud_alarm,
                        COALESCE(created_at, received_at) AS received_at
                 FROM readings
                 WHERE device_id=? AND instrument_id=? AND received_at >= ?
@@ -1197,6 +1410,28 @@ async def ingest(request: Request) -> JSONResponse:
                 ),
             )
         cur.execute(
+            q(INSTRUMENT_SELECT + " WHERE device_id=? AND instrument_id=?"),
+            (device_id, instrument_id),
+        )
+        found = cur.fetchone()
+        if found:
+            inst = dict(found) if isinstance(found, dict) or hasattr(found, "keys") else {}
+            apply_cloud_alarm(cur, inst)
+            cur.execute(
+                q(
+                    """
+                    UPDATE readings SET cloud_alarm=?
+                    WHERE device_id=? AND instrument_id=? AND received_at=?
+                    """
+                ),
+                (
+                    1 if int(inst.get("alarm_active") or 0) else 0,
+                    device_id,
+                    instrument_id,
+                    received,
+                ),
+            )
+        cur.execute(
             q(
                 """
                 SELECT id, instrument_id, kind, register, raw_value, display_value
@@ -1285,18 +1520,12 @@ async def job_result(job_id: int, request: Request) -> dict:
 def dashboard_shell(request: Request | None = None) -> dict:
     with db() as conn:
         cur = conn.cursor()
-        cur.execute(
-            """
-            SELECT device_id, instrument_id, server_name, label, last_probe1, last_probe2,
-                   last_setpoint, last_flags, last_stale, last_seen
-            FROM instruments
-            ORDER BY device_id, instrument_id
-            """
-        )
+        cur.execute(INSTRUMENT_SELECT + " ORDER BY device_id, instrument_id")
         instruments = fetchall(cur)
     allowed = allowed_site_ids(request) if request is not None else None
     if allowed is not None:
         instruments = [row for row in instruments if str(row.get("device_id")) in allowed]
+    instruments = refresh_cloud_alarms(instruments)
     with db() as conn:
         cur = conn.cursor()
         cur.execute(
@@ -1395,6 +1624,7 @@ def dashboard_shell(request: Request | None = None) -> dict:
         "kpis": compute_kpis(widgets, sites),
         "alarm_feed": build_alarm_feed(widgets),
         "site_names": {row["device_id"]: row["display_name"] for row in sites},
+        "smtp_configured": smtp_configured(),
         "admin_name": session_name(request) if request is not None else "Admin",
         "is_manager": is_manager(request) if request is not None else True,
     }
@@ -2039,6 +2269,77 @@ def set_site_name(
                 "device_id": normalize_device_id(device_id),
                 "name": display,
                 "store_name": store_name,
+            }
+        )
+    return _redirect_next(next)
+
+
+@app.post("/instrument/alarms")
+def set_instrument_alarms(
+    request: Request,
+    instrument_id: int = Form(...),
+    device_id: str = Form(...),
+    high_alarm_temp: str = Form(""),
+    high_alarm_delay_min: str = Form(""),
+    alarm_reset_temp: str = Form(""),
+    alarm_notify_delay_min: str = Form(""),
+    next: str = Form(""),
+):
+    require_site_access(request, device_id)
+    high = as_float(high_alarm_temp)
+    delay = as_float(high_alarm_delay_min)
+    reset = as_float(alarm_reset_temp)
+    notify = as_float(alarm_notify_delay_min)
+    if high is not None and (high < -50 or high > 80):
+        raise HTTPException(400, "high alarm temperature out of range")
+    if reset is not None and (reset < -50 or reset > 80):
+        raise HTTPException(400, "alarm reset temperature out of range")
+    if high is not None and reset is not None and reset > high:
+        raise HTTPException(400, "reset temperature must be at or below the high alarm")
+    for label, value in (("high delay", delay), ("notification delay", notify)):
+        if value is not None and (value < 0 or value > 10080):
+            raise HTTPException(400, f"{label} must be 0 to 10080 minutes")
+    if high is None:
+        delay = None
+        reset = None
+        notify = None
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            q("SELECT device_id FROM instruments WHERE device_id=? AND instrument_id=?"),
+            (device_id, instrument_id),
+        )
+        if not cur.fetchone():
+            raise HTTPException(404, "instrument not found")
+        cur.execute(
+            q(
+                """
+                UPDATE instruments SET
+                    alarm_high_temp=?, alarm_high_delay_min=?, alarm_reset_temp=?,
+                    alarm_notify_delay_min=?, alarm_active=0, alarm_high_since=NULL,
+                    alarm_active_since=NULL, alarm_email_sent=0
+                WHERE device_id=? AND instrument_id=?
+                """
+            ),
+            (high, delay if delay is not None else 0, reset, notify if notify is not None else 0, device_id, instrument_id),
+        )
+        cur.execute(
+            q(INSTRUMENT_SELECT + " WHERE device_id=? AND instrument_id=?"),
+            (device_id, instrument_id),
+        )
+        found = cur.fetchone()
+        if found:
+            inst = dict(found) if isinstance(found, dict) or hasattr(found, "keys") else {}
+            apply_cloud_alarm(cur, inst)
+    if _wants_json(request):
+        return JSONResponse(
+            {
+                "ok": True,
+                "instrument_id": instrument_id,
+                "high_alarm_temp": high,
+                "high_alarm_delay_min": delay,
+                "alarm_reset_temp": reset,
+                "alarm_notify_delay_min": notify,
             }
         )
     return _redirect_next(next)

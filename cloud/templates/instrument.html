@@ -70,6 +70,39 @@
           </article>
         </section>
 
+        <section class="alarm-panel" aria-label="Cloud alarm settings">
+          <h2>Alarms</h2>
+          <p class="alarm-hint">Cloud high-temperature alarm. Leave High Alarm Temperature blank to disable. Email is sent after the notification delay once the alarm is active.</p>
+          <form class="user-form alarm-form" method="post" action="/instrument/alarms">
+            <input type="hidden" name="device_id" value="{{ inst.device_id }}">
+            <input type="hidden" name="instrument_id" value="{{ inst.instrument_id }}">
+            <input type="hidden" name="next" value="{{ inst.href }}">
+            <div class="alarm-grid">
+              <div>
+                <label for="high-alarm-temp">High Alarm Temperature (°C)</label>
+                <input id="high-alarm-temp" name="high_alarm_temp" type="number" step="0.1" min="-50" max="80" value="{{ inst.alarm_high_temp_input }}" placeholder="Disabled">
+              </div>
+              <div>
+                <label for="high-alarm-delay">High Alarm Temp delay (min)</label>
+                <input id="high-alarm-delay" name="high_alarm_delay_min" type="number" step="1" min="0" max="10080" value="{{ inst.alarm_high_delay_input }}" placeholder="0">
+              </div>
+              <div>
+                <label for="alarm-reset-temp">Alarm Reset temp (°C)</label>
+                <input id="alarm-reset-temp" name="alarm_reset_temp" type="number" step="0.1" min="-50" max="80" value="{{ inst.alarm_reset_temp_input }}" placeholder="Same as high">
+              </div>
+              <div>
+                <label for="alarm-notify-delay">Alarm Notification delay (min)</label>
+                <input id="alarm-notify-delay" name="alarm_notify_delay_min" type="number" step="1" min="0" max="10080" value="{{ inst.alarm_notify_delay_input }}" placeholder="0">
+                <p class="alarm-hint">Email notification to users with access to this site.</p>
+              </div>
+            </div>
+            <button class="primary-btn" type="submit">Save alarms</button>
+            {% if not smtp_configured %}
+            <p class="alarm-hint">Email is not sending yet. Set SMTP_HOST and SMTP_FROM on the cloud service to enable notifications.</p>
+            {% endif %}
+          </form>
+        </section>
+
         <section class="chart-panel" data-instrument-id="{{ inst.instrument_id }}" data-device-id="{{ inst.device_id }}" data-range="{{ range_key }}">
           <div class="chart-toolbar">
             <h2>Trend</h2>
