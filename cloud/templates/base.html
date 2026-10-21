@@ -8,7 +8,7 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>{% block title %}Keyview Cloud{% endblock %}</title>
-  <link rel="stylesheet" href="/static/app.css?v=sites2">
+  <link rel="stylesheet" href="/static/app.css?v=orgs1">
   {% block extra_head %}{% endblock %}
 </head>
 <body>
@@ -38,6 +38,10 @@
           <span>Sites</span>
         </a>
         {% if is_manager %}
+        <a class="side-link{% if page == 'organisations' %} active{% endif %}" href="/organisations">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V8l8-4 8 4v12" stroke-linejoin="round"/><path d="M9 20v-6h6v6" stroke-linejoin="round"/></svg>
+          <span>Organisations</span>
+        </a>
         <a class="side-link{% if page == 'users' %} active{% endif %}" href="/users">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3"/><path d="M3.5 19c.6-3 2.8-5 5.5-5s4.9 2 5.5 5" stroke-linecap="round"/><circle cx="17" cy="9" r="2.4"/><path d="M21.5 19c-.4-2.3-1.9-4-4.5-4" stroke-linecap="round"/></svg>
           <span>Users</span>
@@ -59,7 +63,7 @@
       </div>
     </aside>
 
-    <div class="shell-content{% if page in ('dashboard', 'sites', 'users') %} is-overview{% endif %}">
+    <div class="shell-content{% if page in ('dashboard', 'sites', 'users', 'organisations') %} is-overview{% endif %}">
       <header class="shell-topbar">
         <div class="top-health top-health-{{ health.level }}">
           <span class="top-health-label">{{ health.label }}</span>
@@ -84,13 +88,13 @@
         <span>Sites</span>
       </a>
       {% if is_manager %}
+      <a class="tab-link{% if page == 'organisations' %} active{% endif %}" href="/organisations">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V8l8-4 8 4v12" stroke-linejoin="round"/><path d="M9 20v-6h6v6" stroke-linejoin="round"/></svg>
+        <span>Orgs</span>
+      </a>
       <a class="tab-link{% if page == 'users' %} active{% endif %}" href="/users">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3"/><path d="M3.5 19c.6-3 2.8-5 5.5-5s4.9 2 5.5 5" stroke-linecap="round"/><circle cx="17" cy="9" r="2.4"/><path d="M21.5 19c-.4-2.3-1.9-4-4.5-4" stroke-linecap="round"/></svg>
         <span>Users</span>
-      </a>
-      <a class="tab-link{% if page == 'jobs' %} active{% endif %}" href="/jobs">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 6h14M5 12h14M5 18h9" stroke-linecap="round"/></svg>
-        <span>Jobs</span>
       </a>
       {% endif %}
     </nav>

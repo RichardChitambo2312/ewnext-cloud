@@ -190,6 +190,29 @@ def init_db() -> None:
             )
             """
         )
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS organisations (
+                id {serial},
+                name TEXT NOT NULL,
+                parent_id INTEGER,
+                locked INTEGER NOT NULL DEFAULT 0,
+                created_at {ts} NOT NULL
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS org_sites (
+                organisation_id INTEGER NOT NULL,
+                device_id TEXT NOT NULL,
+                PRIMARY KEY (organisation_id, device_id)
+            )
+            """
+        )
+        _ensure_column(cur, "app_users", "organisation_id", "INTEGER")
+        conn.commit()
+        _ensure_org_tree(cur)
         conn.commit()
 
 
@@ -213,6 +236,98 @@ def _ensure_column(cur, table: str, column: str, typedef: str) -> None:
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+ORG_ADMIN_ROLES = {"manager", "org_admin", "administrator", "admin"}
+SUB_OPERATOR_ROLES = {"operator", "sub_operator"}
+
+
+def normalize_role(value: Any) -> str:
+    role = str(value or "").strip().lower()
+    if role in ORG_ADMIN_ROLES:
+        return "org_admin"
+    return "sub_operator"
+
+
+def role_label(value: Any) -> str:
+    if normalize_role(value) == "org_admin":
+        return "Organisation administrator"
+    return "Sub-organisation operator"
+
+
+def _row_get(row: Any, key: str, index: int = 0) -> Any:
+    if isinstance(row, dict) or hasattr(row, "keys"):
+        try:
+            return row[key]
+        except Exception:
+            return None
+    try:
+        return row[index]
+    except Exception:
+        return None
+
+
+def _ensure_org_tree(cur) -> None:
+    cur.execute("SELECT id, name, parent_id FROM organisations ORDER BY id")
+    rows = fetchall(cur)
+    if not rows:
+        cur.execute(
+            q("INSERT INTO organisations (name, parent_id, locked, created_at) VALUES (?, ?, 0, ?)"),
+            ("Keyview", None, now_iso()),
+        )
+        root_id = int(cur.lastrowid) if not _is_pg() else None
+        if root_id is None:
+            cur.execute(q("SELECT id FROM organisations WHERE parent_id IS NULL ORDER BY id LIMIT 1"))
+            found = cur.fetchone()
+            root_id = int(_row_get(found, "id", 0))
+        cur.execute(
+            q("INSERT INTO organisations (name, parent_id, locked, created_at) VALUES (?, ?, 0, ?)"),
+            ("Main", root_id, now_iso()),
+        )
+        main_id = int(cur.lastrowid) if not _is_pg() else None
+        if main_id is None:
+            cur.execute(q("SELECT id FROM organisations WHERE parent_id=? ORDER BY id LIMIT 1"), (root_id,))
+            found = cur.fetchone()
+            main_id = int(_row_get(found, "id", 0))
+        cur.execute("SELECT DISTINCT device_id FROM instruments")
+        for row in fetchall(cur):
+            device_id = str(_row_get(row, "device_id", 0) or "").strip()
+            if device_id:
+                cur.execute(
+                    q("INSERT INTO org_sites (organisation_id, device_id) VALUES (?, ?)"),
+                    (main_id, device_id),
+                )
+        return
+    cur.execute("SELECT organisation_id, device_id FROM org_sites")
+    linked = {str(_row_get(row, "device_id", 1)) for row in fetchall(cur)}
+    cur.execute("SELECT id FROM organisations WHERE parent_id IS NOT NULL ORDER BY id LIMIT 1")
+    child = cur.fetchone()
+    if child is None:
+        cur.execute("SELECT id FROM organisations WHERE parent_id IS NULL ORDER BY id LIMIT 1")
+        root = cur.fetchone()
+        if root is None:
+            return
+        root_id = int(_row_get(root, "id", 0))
+        cur.execute(
+            q("INSERT INTO organisations (name, parent_id, locked, created_at) VALUES (?, ?, 0, ?)"),
+            ("Main", root_id, now_iso()),
+        )
+        child_id = int(cur.lastrowid) if not _is_pg() else None
+        if child_id is None:
+            cur.execute(q("SELECT id FROM organisations WHERE parent_id=? ORDER BY id LIMIT 1"), (root_id,))
+            found = cur.fetchone()
+            child_id = int(_row_get(found, "id", 0))
+    else:
+        child_id = int(_row_get(child, "id", 0))
+    cur.execute("SELECT DISTINCT device_id FROM instruments")
+    for row in fetchall(cur):
+        device_id = str(_row_get(row, "device_id", 0) or "").strip()
+        if device_id and device_id not in linked:
+            cur.execute(
+                q("INSERT INTO org_sites (organisation_id, device_id) VALUES (?, ?)"),
+                (child_id, device_id),
+            )
+            linked.add(device_id)
 
 
 def normalize_device_id(value: Any) -> str:
@@ -302,11 +417,33 @@ def logged_in(request: Request) -> bool:
 def is_manager(request: Request) -> bool:
     if request.session.get("admin"):
         return True
-    return str(request.session.get("role") or "") == "manager"
+    return normalize_role(request.session.get("role")) == "org_admin"
 
 
 def session_name(request: Request) -> str:
     return str(request.session.get("name") or "Admin")
+
+
+def org_sites_for(organisation_id: int | None, include_children: bool = False) -> list[str]:
+    if not organisation_id:
+        return []
+    ids = [int(organisation_id)]
+    if include_children:
+        with db() as conn:
+            cur = conn.cursor()
+            cur.execute(q("SELECT id FROM organisations WHERE parent_id=?"), (organisation_id,))
+            ids.extend(int(_row_get(row, "id", 0)) for row in fetchall(cur))
+    with db() as conn:
+        cur = conn.cursor()
+        placeholders = ",".join("?" * len(ids))
+        sql = f"SELECT device_id FROM org_sites WHERE organisation_id IN ({placeholders}) ORDER BY device_id"
+        cur.execute(q(sql) if _is_pg() else sql, tuple(ids))
+        out: list[str] = []
+        for row in fetchall(cur):
+            value = str(_row_get(row, "device_id", 0) or "").strip()
+            if value and value not in out:
+                out.append(value)
+        return out
 
 
 def allowed_site_ids(request: Request) -> set[str] | None:
@@ -358,21 +495,52 @@ def load_user_sites(user_id: int) -> list[str]:
         return [str(row.get("device_id") if isinstance(row, dict) else row[0]) for row in fetchall(cur)]
 
 
+def org_is_locked(organisation_id: int | None) -> bool:
+    if not organisation_id:
+        return False
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(q("SELECT locked FROM organisations WHERE id=?"), (organisation_id,))
+        row = cur.fetchone()
+    if not row:
+        return False
+    return bool(int(_row_get(row, "locked", 0) or 0))
+
+
+def user_portfolio(user: dict) -> list[str] | None:
+    role = normalize_role(user.get("role"))
+    org_id = as_int(user.get("organisation_id"))
+    if role == "org_admin":
+        return None
+    if org_is_locked(org_id):
+        return []
+    portfolio = org_sites_for(org_id, include_children=False)
+    assigned = load_user_sites(int(user["id"])) if user.get("id") is not None else []
+    if assigned:
+        allowed = set(portfolio)
+        return [site for site in assigned if site in allowed]
+    return portfolio
+
+
 def start_user_session(request: Request, user: dict) -> None:
+    role = normalize_role(user.get("role"))
     request.session.clear()
     request.session["uid"] = int(user["id"])
     request.session["name"] = user["name"]
-    request.session["role"] = user["role"]
-    request.session["admin"] = user["role"] == "manager"
-    request.session["sites"] = [] if user["role"] == "manager" else load_user_sites(int(user["id"]))
+    request.session["role"] = role
+    request.session["admin"] = role == "org_admin"
+    request.session["org_id"] = as_int(user.get("organisation_id"))
+    portfolio = user_portfolio(user)
+    request.session["sites"] = [] if portfolio is None else portfolio
 
 
 def start_admin_session(request: Request) -> None:
     request.session.clear()
     request.session["admin"] = True
-    request.session["role"] = "manager"
+    request.session["role"] = "org_admin"
     request.session["name"] = "Admin"
     request.session["uid"] = None
+    request.session["org_id"] = None
     request.session["sites"] = []
 
 
@@ -380,7 +548,7 @@ def find_user_by_email(email: str) -> dict | None:
     with db() as conn:
         cur = conn.cursor()
         cur.execute(
-            q("SELECT id, name, email, password_hash, role FROM app_users WHERE email=?"),
+            q("SELECT id, name, email, password_hash, role, organisation_id FROM app_users WHERE email=?"),
             (email,),
         )
         row = cur.fetchone()
@@ -394,6 +562,7 @@ def find_user_by_email(email: str) -> dict | None:
         "email": row[2],
         "password_hash": row[3],
         "role": row[4],
+        "organisation_id": row[5] if len(row) > 5 else None,
     }
 
 
@@ -1268,30 +1437,52 @@ def known_site_ids() -> list[str]:
         rows = fetchall(cur)
     ids: list[str] = []
     for row in rows:
-        value = str(row.get("device_id") if isinstance(row, dict) else row[0] or "").strip()
+        value = str(_row_get(row, "device_id", 0) or "").strip()
         if value and value not in ids:
             ids.append(value)
     return ids
+
+
+def load_organisations() -> list[dict]:
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT id, name, parent_id, locked, created_at FROM organisations ORDER BY name")
+        return [dict(row) for row in fetchall(cur)]
+
+
+def assigned_device_ids() -> set[str]:
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT device_id FROM org_sites")
+        return {str(_row_get(row, "device_id", 0) or "").strip() for row in fetchall(cur) if _row_get(row, "device_id", 0)}
 
 
 def load_app_users() -> list[dict]:
     with db() as conn:
         cur = conn.cursor()
         cur.execute(
-            "SELECT id, name, email, role, created_at FROM app_users ORDER BY name, email"
+            "SELECT id, name, email, role, organisation_id, created_at FROM app_users ORDER BY name, email"
         )
         users = fetchall(cur)
         cur.execute("SELECT user_id, device_id FROM user_sites ORDER BY device_id")
         links = fetchall(cur)
+        cur.execute("SELECT id, name FROM organisations")
+        orgs = fetchall(cur)
+    names = {int(_row_get(row, "id", 0)): str(_row_get(row, "name", 1) or "") for row in orgs}
     by_user: dict[int, list[str]] = {}
     for link in links:
-        uid = int(link.get("user_id") if isinstance(link, dict) else link[0])
-        site = str(link.get("device_id") if isinstance(link, dict) else link[1])
+        uid = int(_row_get(link, "user_id", 0))
+        site = str(_row_get(link, "device_id", 1) or "")
         by_user.setdefault(uid, []).append(site)
     out = []
     for user in users:
         item = dict(user)
+        org_id = as_int(item.get("organisation_id"))
         item["sites"] = by_user.get(int(item["id"]), [])
+        item["organisation_id"] = org_id
+        item["organisation_name"] = names.get(org_id or 0, "")
+        item["role_key"] = normalize_role(item.get("role"))
+        item["role_label"] = role_label(item.get("role"))
         out.append(item)
     return out
 
@@ -1299,15 +1490,154 @@ def load_app_users() -> list[dict]:
 def users_page_ctx(request: Request, error: str | None = None, notice: str | None = None) -> dict:
     ctx = dashboard_shell(request)
     attach_session(ctx, request, "users")
+    orgs = load_organisations()
+    sub_orgs = [row for row in orgs if as_int(row.get("parent_id"))]
     ctx.update(
         {
             "app_users": load_app_users(),
             "known_sites": known_site_ids(),
+            "sub_orgs": sub_orgs,
             "error": error,
             "notice": notice,
         }
     )
     return ctx
+
+
+def organisations_page_ctx(request: Request, error: str | None = None, notice: str | None = None) -> dict:
+    ctx = dashboard_shell(request)
+    attach_session(ctx, request, "organisations")
+    orgs = load_organisations()
+    users = load_app_users()
+    assigned = assigned_device_ids()
+    all_sites = known_site_ids()
+    unassigned = [site for site in all_sites if site not in assigned]
+    root = next((row for row in orgs if not as_int(row.get("parent_id"))), None)
+    children = [row for row in orgs if as_int(row.get("parent_id")) == as_int(root.get("id") if root else None)]
+    site_map: dict[int, list[str]] = {}
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT organisation_id, device_id FROM org_sites ORDER BY device_id")
+        for row in fetchall(cur):
+            oid = int(_row_get(row, "organisation_id", 0))
+            site_map.setdefault(oid, []).append(str(_row_get(row, "device_id", 1) or ""))
+    for child in children:
+        oid = int(child["id"])
+        child["sites"] = site_map.get(oid, [])
+        child["locked"] = bool(int(child.get("locked") or 0))
+        child["team"] = [user for user in users if user.get("organisation_id") == oid]
+        child["href"] = f"/organisations/{oid}"
+    ctx.update(
+        {
+            "root_org": root,
+            "sub_orgs": children,
+            "unassigned_sites": unassigned,
+            "error": error,
+            "notice": notice,
+        }
+    )
+    return ctx
+
+
+@app.get("/organisations", response_class=HTMLResponse)
+def organisations_page(request: Request):
+    if not logged_in(request):
+        return RedirectResponse("/login", status_code=302)
+    if not is_manager(request):
+        return RedirectResponse("/", status_code=302)
+    return templates.TemplateResponse("organisations.html", organisations_page_ctx(request))
+
+
+@app.post("/organisations", response_class=HTMLResponse)
+def organisations_create(request: Request, name: str = Form(...)):
+    if not logged_in(request):
+        return RedirectResponse("/login", status_code=302)
+    if not is_manager(request):
+        raise HTTPException(403, "manager only")
+    display = " ".join(str(name or "").split())
+    if not display or len(display) > NAME_MAX_LEN:
+        return templates.TemplateResponse(
+            "organisations.html",
+            organisations_page_ctx(request, error="Sub-organisation name must be 1 to 80 characters"),
+            status_code=400,
+        )
+    orgs = load_organisations()
+    root = next((row for row in orgs if not as_int(row.get("parent_id"))), None)
+    if root is None:
+        return templates.TemplateResponse(
+            "organisations.html",
+            organisations_page_ctx(request, error="Create the organisation first"),
+            status_code=400,
+        )
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            q("INSERT INTO organisations (name, parent_id, locked, created_at) VALUES (?, ?, 0, ?)"),
+            (display, int(root["id"]), now_iso()),
+        )
+    return templates.TemplateResponse(
+        "organisations.html", organisations_page_ctx(request, notice="Sub-organisation added.")
+    )
+
+
+@app.post("/organisations/{org_id}/lock")
+def organisations_lock(request: Request, org_id: int, locked: int = Form(1)):
+    if not logged_in(request):
+        return RedirectResponse("/login", status_code=302)
+    if not is_manager(request):
+        raise HTTPException(403, "manager only")
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(q("SELECT id, parent_id FROM organisations WHERE id=?"), (org_id,))
+        row = cur.fetchone()
+        if not row or not as_int(_row_get(row, "parent_id", 1)):
+            raise HTTPException(400, "only a sub-organisation can be locked")
+        cur.execute(q("UPDATE organisations SET locked=? WHERE id=?"), (1 if int(locked) else 0, org_id))
+    return RedirectResponse("/organisations", status_code=303)
+
+
+@app.post("/organisations/{org_id}/sites", response_class=HTMLResponse)
+def organisations_add_site(request: Request, org_id: int, device_id: str = Form(...)):
+    if not logged_in(request):
+        return RedirectResponse("/login", status_code=302)
+    if not is_manager(request):
+        raise HTTPException(403, "manager only")
+    site = normalize_device_id(device_id)
+    if site == "unknown":
+        return templates.TemplateResponse(
+            "organisations.html",
+            organisations_page_ctx(request, error="Enter a Device ID to add as a site"),
+            status_code=400,
+        )
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(q("SELECT id, parent_id FROM organisations WHERE id=?"), (org_id,))
+        row = cur.fetchone()
+        if not row or not as_int(_row_get(row, "parent_id", 1)):
+            return templates.TemplateResponse(
+                "organisations.html",
+                organisations_page_ctx(request, error="Sites are added to a sub-organisation"),
+                status_code=400,
+            )
+        cur.execute(q("DELETE FROM org_sites WHERE device_id=?"), (site,))
+        cur.execute(q("INSERT INTO org_sites (organisation_id, device_id) VALUES (?, ?)"), (org_id, site))
+    return templates.TemplateResponse(
+        "organisations.html", organisations_page_ctx(request, notice=f"Site {site} added.")
+    )
+
+
+@app.post("/organisations/{org_id}/sites/delete")
+def organisations_delete_site(request: Request, org_id: int, device_id: str = Form(...)):
+    if not logged_in(request):
+        return RedirectResponse("/login", status_code=302)
+    if not is_manager(request):
+        raise HTTPException(403, "manager only")
+    site = normalize_device_id(device_id)
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(q("DELETE FROM org_sites WHERE organisation_id=? AND device_id=?"), (org_id, site))
+        cur.execute(q("DELETE FROM user_sites WHERE device_id=?"), (site,))
+    return RedirectResponse("/organisations", status_code=303)
 
 
 @app.get("/users", response_class=HTMLResponse)
@@ -1334,7 +1664,8 @@ def users_create(
     name: str = Form(...),
     email: str = Form(...),
     password: str = Form(...),
-    role: str = Form("operator"),
+    role: str = Form("sub_operator"),
+    organisation_id: str = Form(""),
     site_id: Any = Form(None),
 ):
     if not logged_in(request):
@@ -1343,8 +1674,9 @@ def users_create(
         raise HTTPException(403, "manager only")
     display = " ".join(str(name or "").split())
     mail = normalize_email(email)
-    role_name = "manager" if str(role).strip().lower() == "manager" else "operator"
+    role_name = normalize_role(role)
     sites = form_id_list(site_id)
+    org_id = as_int(organisation_id)
     if not display or len(display) > NAME_MAX_LEN:
         return templates.TemplateResponse(
             "users.html", users_page_ctx(request, error="Name must be 1 to 80 characters"), status_code=400
@@ -1359,32 +1691,38 @@ def users_create(
             users_page_ctx(request, error=f"Password must be at least {PASSWORD_MIN_LEN} characters"),
             status_code=400,
         )
-    if role_name == "operator" and not sites:
+    orgs = load_organisations()
+    root = next((row for row in orgs if not as_int(row.get("parent_id"))), None)
+    sub_ids = {int(row["id"]) for row in orgs if as_int(row.get("parent_id"))}
+    if role_name == "org_admin":
+        org_id = as_int(root.get("id") if root else None)
+        sites = []
+    elif not org_id or org_id not in sub_ids:
         return templates.TemplateResponse(
             "users.html",
-            users_page_ctx(request, error="Choose at least one site for this user"),
+            users_page_ctx(request, error="Choose a sub-organisation for this operator"),
             status_code=400,
         )
-    known = known_site_ids()
+    known = org_sites_for(org_id, include_children=False) if role_name == "sub_operator" else known_site_ids()
     try:
         with db() as conn:
             cur = conn.cursor()
             cur.execute(
                 q(
                     """
-                    INSERT INTO app_users (name, email, password_hash, role, created_at)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO app_users (name, email, password_hash, role, organisation_id, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     """
                 ),
-                (display, mail, hash_password(password), role_name, now_iso()),
+                (display, mail, hash_password(password), role_name, org_id, now_iso()),
             )
             if _is_pg():
                 cur.execute(q("SELECT id FROM app_users WHERE email=?"), (mail,))
                 row = cur.fetchone()
-                user_id = int(row["id"] if isinstance(row, dict) or hasattr(row, "keys") else row[0])
+                user_id = int(_row_get(row, "id", 0))
             else:
                 user_id = int(cur.lastrowid)
-            if role_name == "operator":
+            if role_name == "sub_operator" and sites:
                 replace_user_sites(cur, user_id, sites, known)
     except Exception as exc:
         text = str(exc).lower()
@@ -1400,29 +1738,40 @@ def users_create(
 def users_access(
     request: Request,
     user_id: int,
-    role: str = Form("operator"),
+    role: str = Form("sub_operator"),
+    organisation_id: str = Form(""),
     site_id: Any = Form(None),
 ):
     if not logged_in(request):
         return RedirectResponse("/login", status_code=302)
     if not is_manager(request):
         raise HTTPException(403, "manager only")
-    role_name = "manager" if str(role).strip().lower() == "manager" else "operator"
+    role_name = normalize_role(role)
     sites = form_id_list(site_id)
-    if role_name == "operator" and not sites:
+    org_id = as_int(organisation_id)
+    orgs = load_organisations()
+    root = next((row for row in orgs if not as_int(row.get("parent_id"))), None)
+    sub_ids = {int(row["id"]) for row in orgs if as_int(row.get("parent_id"))}
+    if role_name == "org_admin":
+        org_id = as_int(root.get("id") if root else None)
+        sites = []
+    elif not org_id or org_id not in sub_ids:
         return templates.TemplateResponse(
             "users.html",
-            users_page_ctx(request, error="Choose at least one site for this user"),
+            users_page_ctx(request, error="Choose a sub-organisation for this operator"),
             status_code=400,
         )
-    known = known_site_ids()
+    known = org_sites_for(org_id, include_children=False) if role_name == "sub_operator" else known_site_ids()
     with db() as conn:
         cur = conn.cursor()
         cur.execute(q("SELECT id FROM app_users WHERE id=?"), (user_id,))
         if not cur.fetchone():
             raise HTTPException(404, "user not found")
-        cur.execute(q("UPDATE app_users SET role=? WHERE id=?"), (role_name, user_id))
-        if role_name == "manager":
+        cur.execute(
+            q("UPDATE app_users SET role=?, organisation_id=? WHERE id=?"),
+            (role_name, org_id, user_id),
+        )
+        if role_name == "org_admin" or not sites:
             cur.execute(q("DELETE FROM user_sites WHERE user_id=?"), (user_id,))
         else:
             replace_user_sites(cur, user_id, sites, known)

@@ -5,7 +5,7 @@
           <div>
             <p class="eyebrow">Access</p>
             <h1>Users</h1>
-            <p class="page-sub">Add operators and choose which sites they can open. Managers can see every site and manage users.</p>
+            <p class="page-sub">Organisation administrators can create users, assign roles, and grant sites inside a sub-organisation. Operators cannot add users.</p>
           </div>
         </div>
 
@@ -22,12 +22,20 @@
               <input id="email" name="email" type="email" maxlength="120" required autocomplete="off">
               <label for="password">Password</label>
               <input id="password" name="password" type="password" minlength="8" required autocomplete="new-password">
-              <label for="role">Access level</label>
+              <label for="role">Role</label>
               <select id="role" name="role">
-                <option value="operator" selected>Operator — selected sites only</option>
-                <option value="manager">Manager — all sites and users</option>
+                <option value="sub_operator" selected>Sub-organisation operator — monitor portfolio sites</option>
+                <option value="org_admin">Organisation administrator — all sub-orgs, users and sites</option>
               </select>
-              <p class="field-label">Sites</p>
+              <label for="organisation_id">Sub-organisation</label>
+              <select id="organisation_id" name="organisation_id">
+                <option value="">Select a sub-organisation</option>
+                {% for org in sub_orgs %}
+                <option value="{{ org.id }}">{{ org.name }}</option>
+                {% endfor %}
+              </select>
+              <p class="field-label">Sites in that portfolio</p>
+              <p class="muted">Leave unticked for all sites in the sub-organisation. Tick to limit an operator to specific sites.</p>
               {% if known_sites %}
               <div class="site-checks">
                 {% for site in known_sites %}
@@ -38,7 +46,7 @@
                 {% endfor %}
               </div>
               {% else %}
-              <p class="muted">No sites yet. Telemetry with a Device ID will appear here.</p>
+              <p class="muted">No sites yet. Add a Device ID on a sub-organisation first.</p>
               {% endif %}
               <button class="primary-btn" type="submit">Add user</button>
             </form>
@@ -50,15 +58,22 @@
               <header class="user-card-head">
                 <div>
                   <strong>{{ user.name }}</strong>
-                  <p class="muted">{{ user.email }}</p>
+                  <p class="muted">{{ user.email }}{% if user.organisation_name %} · {{ user.organisation_name }}{% endif %}</p>
                 </div>
-                <span class="status {{ 'done' if user.role == 'manager' else 'pending' }}">{{ user.role }}</span>
+                <span class="status {{ 'done' if user.role_key == 'org_admin' else 'pending' }}">{{ user.role_label }}</span>
               </header>
               <form method="post" action="/users/{{ user.id }}/access" class="user-form">
-                <label for="role-{{ user.id }}">Access level</label>
+                <label for="role-{{ user.id }}">Role</label>
                 <select id="role-{{ user.id }}" name="role">
-                  <option value="operator"{% if user.role != 'manager' %} selected{% endif %}>Operator — selected sites only</option>
-                  <option value="manager"{% if user.role == 'manager' %} selected{% endif %}>Manager — all sites and users</option>
+                  <option value="sub_operator"{% if user.role_key != 'org_admin' %} selected{% endif %}>Sub-organisation operator — monitor portfolio sites</option>
+                  <option value="org_admin"{% if user.role_key == 'org_admin' %} selected{% endif %}>Organisation administrator — all sub-orgs, users and sites</option>
+                </select>
+                <label for="org-{{ user.id }}">Sub-organisation</label>
+                <select id="org-{{ user.id }}" name="organisation_id">
+                  <option value="">Select a sub-organisation</option>
+                  {% for org in sub_orgs %}
+                  <option value="{{ org.id }}"{% if user.organisation_id == org.id %} selected{% endif %}>{{ org.name }}</option>
+                  {% endfor %}
                 </select>
                 <p class="field-label">Sites</p>
                 {% if known_sites %}
@@ -84,7 +99,7 @@
             {% else %}
             <article class="empty">
               <h2>No users yet</h2>
-              <p>Add an operator and tick the sites they may open on the dashboard.</p>
+              <p>Add an organisation administrator or a sub-organisation operator.</p>
             </article>
             {% endfor %}
           </div>

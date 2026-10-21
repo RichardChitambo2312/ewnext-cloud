@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}Keyview Cloud — Organisations{% endblock %}
+{% block content %}
+        <div class="page-head">
+          <div>
+            <p class="eyebrow">Administration</p>
+            <h1>{{ root_org.name if root_org else "Organisations" }}</h1>
+            <p class="page-sub">Organisation administrators can add sub-organisations, assign sites, lock access, and manage teams. Operators only monitor sites in their portfolio.</p>
+          </div>
+        </div>
+
+        {% if notice %}<p class="notice">{{ notice }}</p>{% endif %}
+        {% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+        <section class="org-toolbar">
+          <article class="panel user-form-card">
+            <h2>Add sub-organisation</h2>
+            <form method="post" action="/organisations" class="user-form">
+              <label for="sub-name">Name</label>
+              <input id="sub-name" name="name" maxlength="80" required placeholder="e.g. KZN region">
+              <button class="primary-btn" type="submit">Add sub-organisation</button>
+            </form>
+          </article>
+          <article class="panel">
+            <h2>Unassigned sites</h2>
+            {% if unassigned_sites %}
+            <div class="site-checks">
+              {% for site in unassigned_sites %}
+              <span class="check-chip">{{ site }}</span>
+              {% endfor %}
+            </div>
+            <p class="muted">Assign a Device ID to a sub-organisation to put it in a portfolio.</p>
+            {% else %}
+            <p class="muted">Every live Device ID is already in a sub-organisation.</p>
+            {% endif %}
+          </article>
+        </section>
+
+        <div class="org-grid">
+          {% for org in sub_orgs %}
+          <article class="panel org-card{% if org.locked %} is-locked{% endif %}">
+            <header class="org-card-head">
+              <div>
+                <p class="eyebrow">Sub-organisation</p>
+                <h2>{{ org.name }}</h2>
+              </div>
+              {% if org.locked %}
+              <span class="status error">Locked</span>
+              {% else %}
+              <span class="status done">Active</span>
+              {% endif %}
+            </header>
+
+            <p class="field-label">Sites</p>
+            {% if org.sites %}
+            <ul class="org-site-list">
+              {% for site in org.sites %}
+              <li>
+                <a href="/sites/{{ site }}">{{ site }}</a>
+                <form method="post" action="/organisations/{{ org.id }}/sites/delete" onsubmit="return confirm('Remove this site from {{ org.name }}?');">
+                  <input type="hidden" name="device_id" value="{{ site }}">
+                  <button class="ghost-btn ghost-btn-sm" type="submit">Delete site</button>
+                </form>
+              </li>
+              {% endfor %}
+            </ul>
+            {% else %}
+            <p class="muted">No sites in this portfolio yet.</p>
+            {% endif %}
+
+            <form method="post" action="/organisations/{{ org.id }}/sites" class="user-form org-add-site">
+              <label for="site-{{ org.id }}">Add site (Device ID)</label>
+              <input id="site-{{ org.id }}" name="device_id" list="unassigned-{{ org.id }}" maxlength="64" required placeholder="KEY1001">
+              <datalist id="unassigned-{{ org.id }}">
+                {% for site in unassigned_sites %}
+                <option value="{{ site }}"></option>
+                {% endfor %}
+              </datalist>
+              <button class="primary-btn" type="submit">Add site</button>
+            </form>
+
+            <p class="field-label">Team</p>
+            {% if org.team %}
+            <ul class="org-team">
+              {% for member in org.team %}
+              <li>
+                <strong>{{ member.name }}</strong>
+                <span>{{ member.role_label }}{% if member.sites %} · {{ member.sites | join(", ") }}{% else %} · all sites{% endif %}</span>
+              </li>
+              {% endfor %}
+            </ul>
+            {% else %}
+            <p class="muted">No users in this sub-organisation. Add them under Users.</p>
+            {% endif %}
+            <p><a class="site-pick-cta" href="/users">Organisation team management</a></p>
+
+            <form method="post" action="/organisations/{{ org.id }}/lock" class="org-lock">
+              <input type="hidden" name="locked" value="{{ 0 if org.locked else 1 }}">
+              <button class="ghost-btn" type="submit">{{ "Unlock" if org.locked else "Lock sub-organisation" }}</button>
+            </form>
+          </article>
+          {% else %}
+          <article class="empty">
+            <h2>No sub-organisations yet</h2>
+            <p>Add a sub-organisation, then attach Device IDs as sites and create operators for that portfolio.</p>
+          </article>
+          {% endfor %}
+        </div>
+{% endblock %}

@@ -1465,6 +1465,79 @@ th {
   margin: 0 0 14px;
 }
 
+.org-toolbar {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  gap: 14px;
+  margin-bottom: 16px;
+  align-items: start;
+}
+
+.org-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 14px;
+}
+
+.org-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.org-card-head h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.org-card.is-locked {
+  border: 1px solid rgba(239, 68, 68, 0.25);
+}
+
+.org-site-list,
+.org-team {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.org-site-list li,
+.org-team li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.org-team li {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.org-team span {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.org-add-site {
+  margin: 8px 0 14px;
+}
+
+.org-lock {
+  margin-top: 12px;
+}
+
+.ghost-btn-sm {
+  padding: 6px 8px;
+  font-size: 0.75rem;
+}
+
 .user-layout {
   display: grid;
   grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
@@ -1584,7 +1657,8 @@ th {
   }
 
   .dash-split,
-  .user-layout {
+  .user-layout,
+  .org-toolbar {
     grid-template-columns: 1fr;
   }
 }
