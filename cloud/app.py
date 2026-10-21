@@ -106,6 +106,8 @@ def init_db() -> None:
                 last_probe1 REAL,
                 last_probe2 REAL,
                 last_setpoint REAL,
+                last_flags INTEGER,
+                last_stale INTEGER NOT NULL DEFAULT 0,
                 last_seen {ts},
                 PRIMARY KEY (device_id, instrument_id)
             )
@@ -129,6 +131,27 @@ def init_db() -> None:
             """
         )
         conn.commit()
+        _ensure_column(cur, "instruments", "last_flags", "INTEGER")
+        _ensure_column(cur, "instruments", "last_stale", "INTEGER DEFAULT 0")
+        conn.commit()
+
+
+def _ensure_column(cur, table: str, column: str, typedef: str) -> None:
+    if _is_pg():
+        cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {typedef}")
+        return
+    cur.execute(f"PRAGMA table_info({table})")
+    rows = cur.fetchall()
+    names = []
+    for row in rows:
+        if isinstance(row, dict):
+            names.append(row.get("name"))
+        elif hasattr(row, "keys"):
+            names.append(row["name"])
+        else:
+            names.append(row[1])
+    if column not in names:
+        cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {typedef}")
 
 
 def now_iso() -> str:
@@ -172,8 +195,121 @@ def decode_values(values: Any) -> tuple[float | None, float | None, int | None]:
             nums.append(None)
     probe1 = nums[0] / 10.0 if nums and nums[0] is not None else None
     probe2 = nums[1] / 10.0 if len(nums) > 1 and nums[1] is not None else None
-    flags = int(nums[6]) if len(nums) > 6 and nums[6] is not None else None
+    flags = None
+    if len(nums) > 6 and nums[6] is not None:
+        flags = int(nums[6])
+    elif len(nums) > 2 and nums[2] is not None and float(nums[2]) == int(nums[2]):
+        # Some Teltonika maps pack digital status as the 3rd register.
+        flags = int(nums[2])
     return probe1, probe2, flags
+
+
+def format_temp(value: Any) -> str:
+    if value is None:
+        return "—"
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return "—"
+    if n == int(n):
+        return f"{int(n)}°C"
+    return f"{n:.1f}°C"
+
+
+def display_name(server_name: Any, instrument_id: int) -> str:
+    raw = str(server_name or "").strip()
+    if not raw:
+        return f"Instrument {instrument_id}"
+    return raw.replace("_", " ")
+
+
+def parse_ts(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    text = str(value).strip()
+    if not text:
+        return None
+    text = text.replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def instrument_online(row: dict) -> bool:
+    if int(row.get("last_stale") or 0):
+        return False
+    seen = parse_ts(row.get("last_seen"))
+    if seen is None:
+        return False
+    return (datetime.now(timezone.utc) - seen).total_seconds() < 180
+
+
+def decode_flags(flags: Any) -> dict[str, bool]:
+    try:
+        bits = int(flags)
+    except (TypeError, ValueError):
+        return {
+            "cooling": False,
+            "fan": False,
+            "humidity": False,
+            "alarm": False,
+            "defrost_active": False,
+        }
+    return {
+        "cooling": bool(bits & 0x01),
+        "defrost_active": bool(bits & 0x02),
+        "fan": bool(bits & 0x04),
+        "alarm": bool(bits & 0x08),
+        "humidity": bool(bits & 0x10),
+    }
+
+
+def decorate_instrument(row: dict, pending: dict | None) -> dict:
+    inst = dict(row)
+    online = instrument_online(inst)
+    flags = decode_flags(inst.get("last_flags")) if inst.get("last_flags") is not None else None
+    probe1 = inst.get("last_probe1")
+    setpoint = inst.get("last_setpoint")
+    if flags is None:
+        cooling = (
+            probe1 is not None
+            and setpoint is not None
+            and float(probe1) > float(setpoint) + 0.3
+        )
+        flags = {
+            "cooling": cooling,
+            "fan": cooling,
+            "humidity": False,
+            "alarm": not online,
+            "defrost_active": False,
+        }
+    if not online:
+        flags["alarm"] = True
+    pending_value = pending.get("display_value") if pending else None
+    inst.update(
+        {
+            "name": display_name(inst.get("server_name"), inst.get("instrument_id") or 0),
+            "online": online,
+            "cooling": flags["cooling"],
+            "fan": flags["fan"],
+            "humidity": flags["humidity"],
+            "alarm": flags["alarm"],
+            "temperature_label": format_temp(probe1),
+            "defrost_label": format_temp(inst.get("last_probe2")),
+            "setpoint_label": format_temp(pending_value if pending_value is not None else setpoint),
+            "pending_setpoint": pending_value,
+        }
+    )
+    return inst
 
 
 def fetchall(cur) -> list[dict]:
@@ -250,17 +386,20 @@ async def ingest(request: Request) -> JSONResponse:
         last_setpoint = None
         if prev:
             last_setpoint = prev[0] if not isinstance(prev, dict) else prev.get("last_setpoint")
+        stale = 1 if body.get("stale") else 0
         if _is_pg():
             cur.execute(
                 """
                 INSERT INTO instruments (
                     device_id, instrument_id, server_name, last_probe1, last_probe2,
-                    last_setpoint, last_seen
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    last_setpoint, last_flags, last_stale, last_seen
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (device_id, instrument_id) DO UPDATE SET
                     server_name = EXCLUDED.server_name,
                     last_probe1 = EXCLUDED.last_probe1,
                     last_probe2 = EXCLUDED.last_probe2,
+                    last_flags = EXCLUDED.last_flags,
+                    last_stale = EXCLUDED.last_stale,
                     last_seen = EXCLUDED.last_seen
                 """,
                 (
@@ -270,6 +409,8 @@ async def ingest(request: Request) -> JSONResponse:
                     probe1,
                     probe2,
                     last_setpoint,
+                    flags,
+                    stale,
                     received,
                 ),
             )
@@ -278,12 +419,14 @@ async def ingest(request: Request) -> JSONResponse:
                 """
                 INSERT INTO instruments (
                     device_id, instrument_id, server_name, last_probe1, last_probe2,
-                    last_setpoint, last_seen
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    last_setpoint, last_flags, last_stale, last_seen
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (device_id, instrument_id) DO UPDATE SET
                     server_name = excluded.server_name,
                     last_probe1 = excluded.last_probe1,
                     last_probe2 = excluded.last_probe2,
+                    last_flags = excluded.last_flags,
+                    last_stale = excluded.last_stale,
                     last_seen = excluded.last_seen
                 """,
                 (
@@ -293,6 +436,8 @@ async def ingest(request: Request) -> JSONResponse:
                     probe1,
                     probe2,
                     last_setpoint,
+                    flags,
+                    stale,
                     received,
                 ),
             )
@@ -368,7 +513,12 @@ def home(request: Request):
     with db() as conn:
         cur = conn.cursor()
         cur.execute(
-            "SELECT device_id, instrument_id, server_name, last_probe1, last_probe2, last_setpoint, last_seen FROM instruments ORDER BY instrument_id"
+            """
+            SELECT device_id, instrument_id, server_name, last_probe1, last_probe2,
+                   last_setpoint, last_flags, last_stale, last_seen
+            FROM instruments
+            ORDER BY instrument_id
+            """
         )
         instruments = fetchall(cur)
         cur.execute(
@@ -379,13 +529,54 @@ def home(request: Request):
             "SELECT device_id, instrument_id, probe1, probe2, received_at FROM readings ORDER BY id DESC LIMIT 40"
         )
         readings = fetchall(cur)
+    pending_by_key = {
+        (j.get("device_id"), j.get("instrument_id")): j
+        for j in jobs
+        if j.get("status") == "pending" and j.get("kind") == "setpoint"
+    }
+    widgets = [
+        decorate_instrument(
+            inst, pending_by_key.get((inst.get("device_id"), inst.get("instrument_id")))
+        )
+        for inst in instruments
+    ]
+    online_n = sum(1 for w in widgets if w.get("online"))
+    alarm_n = sum(1 for w in widgets if w.get("alarm"))
+    offline_n = len(widgets) - online_n
+    if not widgets:
+        health = {
+            "level": "warning",
+            "label": "Waiting",
+            "detail": "No controller telemetry yet",
+        }
+    elif alarm_n:
+        health = {
+            "level": "critical",
+            "label": "Critical",
+            "detail": f"{alarm_n} instrument alarm{'s' if alarm_n != 1 else ''}",
+        }
+    elif offline_n:
+        health = {
+            "level": "warning",
+            "label": "Warning",
+            "detail": f"{offline_n} controller{'s' if offline_n != 1 else ''} offline",
+        }
+    else:
+        health = {
+            "level": "ok",
+            "label": "OK",
+            "detail": f"{online_n} controller{'s' if online_n != 1 else ''} online",
+        }
     return templates.TemplateResponse(
         "index.html",
         {
             "request": request,
-            "instruments": instruments,
+            "instruments": widgets,
             "jobs": jobs,
             "readings": readings,
+            "health": health,
+            "online_n": online_n,
+            "alarm_n": alarm_n,
         },
     )
 

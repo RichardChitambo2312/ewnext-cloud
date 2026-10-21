@@ -8,82 +8,179 @@
   <meta http-equiv="refresh" content="20">
 </head>
 <body>
-  <header class="top">
-    <div>
-      <p class="eyebrow">EWNext Gateway</p>
-      <h1>Controllers</h1>
-    </div>
-    <form method="post" action="/logout"><button class="ghost" type="submit">Sign out</button></form>
-  </header>
-
-  <section class="grid">
-    {% if not instruments %}
-    <article class="empty">
-      <h2>Waiting for gateway data</h2>
-      <p>Point the TRB245 worker at this service <code>api_url</code> and paste the Render <code>ROUTER_API_KEY</code> as the Router API key. Keep writes locked on the router until the worker job handler is enabled.</p>
-    </article>
-    {% endif %}
-    {% for inst in instruments %}
-    <article class="card">
-      <div class="card-head">
-        <h2>Address {{ inst.instrument_id }}</h2>
-        <span class="pill">{{ inst.device_id }}</span>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <strong class="brand-word">EWNext</strong>
+        <span class="sidebar-mini">Cloud</span>
       </div>
-      <dl>
-        <div><dt>Probe 1</dt><dd>{% if inst.last_probe1 is not none %}{{ '%.1f'|format(inst.last_probe1) }} °C{% else %}—{% endif %}</dd></div>
-        <div><dt>Probe 2</dt><dd>{% if inst.last_probe2 is not none %}{{ '%.1f'|format(inst.last_probe2) }} °C{% else %}—{% endif %}</dd></div>
-        <div><dt>Last setpoint</dt><dd>{% if inst.last_setpoint is not none %}{{ '%.1f'|format(inst.last_setpoint) }} °C{% else %}—{% endif %}</dd></div>
-        <div><dt>Last seen</dt><dd class="small">{{ inst.last_seen or '—' }}</dd></div>
-      </dl>
-      <form class="setpoint" method="post" action="/setpoint">
-        <input type="hidden" name="device_id" value="{{ inst.device_id }}">
-        <input type="hidden" name="instrument_id" value="{{ inst.instrument_id }}">
-        <label>New setpoint °C
-          <input name="setpoint_c" type="number" step="0.1" min="-50" max="40" required>
-        </label>
-        <button type="submit">Queue write</button>
-      </form>
-    </article>
-    {% endfor %}
-  </section>
+      <nav class="sidebar-nav" aria-label="App">
+        <a class="side-link active" href="/">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+          <span>Instruments</span>
+        </a>
+        <a class="side-link" href="#jobs">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 6h14M5 12h14M5 18h9" stroke-linecap="round"/></svg>
+          <span>Jobs</span>
+        </a>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="side-user">
+          <strong>Admin</strong>
+          <span>EWNext Gateway</span>
+        </div>
+        <form method="post" action="/logout">
+          <button class="side-logout" type="submit">Sign out</button>
+        </form>
+      </div>
+    </aside>
 
-  <section class="split">
-    <article>
-      <h2>Recent readings</h2>
-      <table>
-        <thead><tr><th>When</th><th>Addr</th><th>P1</th><th>P2</th></tr></thead>
-        <tbody>
-        {% for r in readings %}
-          <tr>
-            <td class="small">{{ r.received_at }}</td>
-            <td>{{ r.instrument_id }}</td>
-            <td>{% if r.probe1 is not none %}{{ '%.1f'|format(r.probe1) }}{% else %}—{% endif %}</td>
-            <td>{% if r.probe2 is not none %}{{ '%.1f'|format(r.probe2) }}{% else %}—{% endif %}</td>
-          </tr>
-        {% else %}
-          <tr><td colspan="4">No rows yet</td></tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </article>
-    <article>
-      <h2>Setpoint jobs</h2>
-      <table>
-        <thead><tr><th>ID</th><th>Addr</th><th>Value</th><th>Status</th></tr></thead>
-        <tbody>
-        {% for j in jobs %}
-          <tr>
-            <td>{{ j.id }}</td>
-            <td>{{ j.instrument_id }}</td>
-            <td>{{ '%.1f'|format(j.display_value) }} °C</td>
-            <td><span class="status {{ j.status }}">{{ j.status }}</span></td>
-          </tr>
-        {% else %}
-          <tr><td colspan="4">No jobs yet</td></tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </article>
-  </section>
+    <div class="shell-content">
+      <header class="shell-topbar">
+        <div class="top-health top-health-{{ health.level }}">
+          <span class="top-health-label">{{ health.label }}</span>
+          <span>{{ health.detail }}</span>
+        </div>
+        <div class="top-meta">
+          <span class="top-store">{{ online_n }} online · {{ alarm_n }} alarm</span>
+        </div>
+      </header>
+
+      <main class="shell-main">
+        <div class="page-head">
+          <div>
+            <p class="eyebrow">Live controllers</p>
+            <h1>Instruments</h1>
+            <p class="page-sub">Each controller is shown as its own widget. Pencil queues a setpoint write.</p>
+          </div>
+        </div>
+
+        <section class="instrument-grid" aria-label="Instrument widgets">
+          {% if not instruments %}
+          <article class="empty">
+            <h2>Waiting for gateway data</h2>
+            <p>Point the TRB245 worker at this service <code>api_url</code> and paste the Render Router API key. Keep writes locked on the router until the worker job handler is enabled.</p>
+          </article>
+          {% endif %}
+
+          {% for inst in instruments %}
+          <article class="instrument-card{% if inst.alarm %} status-alarm{% endif %}">
+            <input class="edit-toggle" type="checkbox" id="edit-{{ inst.device_id }}-{{ inst.instrument_id }}" aria-hidden="true" tabindex="-1">
+            <header class="instrument-card-head">
+              <div>
+                <h3>{{ inst.name }}</h3>
+                <p>Address: {{ inst.instrument_id }}</p>
+              </div>
+              <label class="icon-btn" for="edit-{{ inst.device_id }}-{{ inst.instrument_id }}" aria-label="Edit setpoint">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+                  <path d="M12 20h9" stroke-linecap="round"/>
+                  <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" stroke-linejoin="round"/>
+                </svg>
+              </label>
+            </header>
+
+            <div class="status-icons" aria-label="Operating status">
+              <span class="si{% if inst.cooling %} on-cool{% endif %}" title="Cooling">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path d="M12 2v20M4.9 6.5l14.2 11M4.9 17.5l14.2-11" stroke-linecap="round"/>
+                  <path d="M12 6l-2-2M12 6l2-2M12 18l-2 2M12 18l2 2" stroke-linecap="round"/>
+                </svg>
+              </span>
+              <span class="si{% if inst.fan %} on-fan{% endif %}" title="Fan">
+                <svg class="{% if inst.fan %}spin{% endif %}" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <circle cx="12" cy="12" r="2.5"/>
+                  <path d="M12 4c3 2 3 5 0 8 3-3 6-3 8 0-2-3-5-3-8 0 3 3 3 6 0 8 3-2 3-5 0-8-3 3-6 3-8 0 2 3 5 3 8 0-3-3-3-6 0-8z"/>
+                </svg>
+              </span>
+              <span class="si{% if inst.humidity %} on-hum{% endif %}" title="Humidity">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path d="M12 3s6 7 6 11a6 6 0 1 1-12 0c0-4 6-11 6-11z" stroke-linejoin="round"/>
+                </svg>
+              </span>
+              <span class="si{% if inst.alarm %} on-alarm{% endif %}" title="Alarm">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path d="M6 9a6 6 0 0 1 12 0c0 7 3 7 3 7H3s3 0 3-7" stroke-linecap="round"/>
+                  <path d="M10 19a2 2 0 0 0 4 0"/>
+                </svg>
+              </span>
+            </div>
+
+            <dl class="instrument-metrics">
+              <div>
+                <dt>Online:</dt>
+                <dd><span class="dot {% if inst.online %}dot-online{% else %}dot-offline{% endif %}"></span></dd>
+              </div>
+              <div>
+                <dt>Temperature:</dt>
+                <dd><span class="pill pill-temp">{{ inst.temperature_label }}</span></dd>
+              </div>
+              <div>
+                <dt>Defrost</dt>
+                <dd><span class="pill pill-defrost">{{ inst.defrost_label }}</span></dd>
+              </div>
+              <div>
+                <dt>Set Point</dt>
+                <dd>
+                  <span class="pill pill-setpoint">{{ inst.setpoint_label }}</span>
+                  {% if inst.pending_setpoint is not none %}
+                  <span class="queued">queued</span>
+                  {% endif %}
+                </dd>
+              </div>
+            </dl>
+
+            <form class="instrument-edit" method="post" action="/setpoint">
+              <input type="hidden" name="device_id" value="{{ inst.device_id }}">
+              <input type="hidden" name="instrument_id" value="{{ inst.instrument_id }}">
+              <label>New setpoint °C
+                <input name="setpoint_c" type="number" step="0.1" min="-50" max="40" value="{% if inst.last_setpoint is not none %}{{ inst.last_setpoint }}{% endif %}" required>
+              </label>
+              <button class="primary-btn" type="submit">Queue write</button>
+            </form>
+          </article>
+          {% endfor %}
+        </section>
+
+        <section class="split" id="jobs">
+          <article class="panel">
+            <h2>Recent readings</h2>
+            <table>
+              <thead><tr><th>When</th><th>Addr</th><th>P1</th><th>P2</th></tr></thead>
+              <tbody>
+              {% for r in readings %}
+                <tr>
+                  <td class="small">{{ r.received_at }}</td>
+                  <td>{{ r.instrument_id }}</td>
+                  <td>{% if r.probe1 is not none %}{{ '%.1f'|format(r.probe1) }}{% else %}—{% endif %}</td>
+                  <td>{% if r.probe2 is not none %}{{ '%.1f'|format(r.probe2) }}{% else %}—{% endif %}</td>
+                </tr>
+              {% else %}
+                <tr><td colspan="4">No rows yet</td></tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </article>
+          <article class="panel">
+            <h2>Setpoint jobs</h2>
+            <table>
+              <thead><tr><th>ID</th><th>Addr</th><th>Value</th><th>Status</th></tr></thead>
+              <tbody>
+              {% for j in jobs %}
+                <tr>
+                  <td>{{ j.id }}</td>
+                  <td>{{ j.instrument_id }}</td>
+                  <td>{{ '%.1f'|format(j.display_value) }} °C</td>
+                  <td><span class="status {{ j.status }}">{{ j.status }}</span></td>
+                </tr>
+              {% else %}
+                <tr><td colspan="4">No jobs yet</td></tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </article>
+        </section>
+      </main>
+    </div>
+  </div>
 </body>
 </html>
