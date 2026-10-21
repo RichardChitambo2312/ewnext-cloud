@@ -9,7 +9,9 @@
               <input type="hidden" name="instrument_id" value="{{ inst.instrument_id }}">
               <input type="hidden" name="next" value="{{ inst.alarm_history_href }}">
               <label class="sr-only" for="nm-history">Instrument name</label>
-              <input class="name-input name-input-lg" id="nm-history" name="name" value="{{ inst.name }}" maxlength="80" required>
+              <input class="name-input name-input-lg" id="nm-history" name="name" value="{{ inst.name }}" maxlength="80" required readonly tabindex="-1">
+              {% set pen_label = "Edit instrument name" %}
+              {% include "pen_btn.html" %}
             </form>
             <p class="page-sub">
               Cloud high-temperature alarm history for address {{ inst.instrument_id }}.

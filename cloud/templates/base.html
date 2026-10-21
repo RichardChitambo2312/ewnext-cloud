@@ -8,7 +8,7 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>{% block title %}Keyview Cloud{% endblock %}</title>
-  <link rel="stylesheet" href="/static/app.css?v=alarm3">
+  <link rel="stylesheet" href="/static/app.css?v=alarm4">
   {% block extra_head %}{% endblock %}
 </head>
 <body>
@@ -112,15 +112,32 @@
     </nav>
   </div>
   <script>
+    function lockField(input) {
+      if (!input) return;
+      input.setAttribute("readonly", "readonly");
+      input.tabIndex = -1;
+    }
+    function unlockField(input) {
+      if (!input) return;
+      input.removeAttribute("readonly");
+      input.tabIndex = 0;
+      input.focus();
+      if (typeof input.select === "function") {
+        try { input.select(); } catch (err) {}
+      }
+    }
     document.querySelectorAll(".name-inline").forEach(function (form) {
       var input = form.querySelector(".name-input");
+      var pen = form.querySelector(".pen-btn");
       if (!input) return;
       var last = input.value;
+      lockField(input);
       function saveName() {
         var next = (input.value || "").trim();
         var allowBlank = form.getAttribute("data-allow-blank") === "1";
         if ((!next && !allowBlank) || next === last) {
           if (!allowBlank) input.value = last;
+          lockField(input);
           return;
         }
         last = next;
@@ -141,8 +158,23 @@
         }).catch(function () {
           last = "";
         });
+        lockField(input);
+      }
+      if (pen) {
+        pen.addEventListener("click", function (event) {
+          event.preventDefault();
+          event.stopPropagation();
+          unlockField(input);
+        });
       }
       input.addEventListener("keydown", function (event) {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          input.value = last;
+          lockField(input);
+          input.blur();
+          return;
+        }
         if (event.key === "Enter") {
           event.preventDefault();
           input.blur();
@@ -243,6 +275,15 @@
       }
       var last = formatSetpoint(input.value);
       input.value = last;
+      lockField(input);
+      var pen = form.querySelector(".pen-btn");
+      if (pen) {
+        pen.addEventListener("click", function (event) {
+          event.preventDefault();
+          event.stopPropagation();
+          unlockField(input);
+        });
+      }
       form.addEventListener("submit", function (event) {
         normalizeSetpointInput();
         if (!input.checkValidity() || input.value === "" || input.value === last) {
@@ -282,15 +323,27 @@
         });
       }
       input.addEventListener("keydown", function (event) {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          input.value = last;
+          lockField(input);
+          input.blur();
+          return;
+        }
         if (event.key !== "Enter") return;
         event.preventDefault();
+        if (input.hasAttribute("readonly")) return;
         normalizeSetpointInput();
         var typed = parseSetpoint(input.value);
-        if (!input.checkValidity() || input.value === "" || input.value === last) return;
+        if (!input.checkValidity() || input.value === "" || input.value === last) {
+          lockField(input);
+          return;
+        }
         if (!isFinite(typed) || typed < -50 || typed > 40) return;
         input.value = formatSetpoint(typed);
         var next = input.value;
         last = next;
+        lockField(input);
         if (pill) pill.classList.add("is-queued");
         fetch("/setpoint", {
           method: "POST",
@@ -324,6 +377,62 @@
           if (pill) pill.classList.remove("is-queued");
           input.value = next;
         });
+      });
+      input.addEventListener("blur", function () {
+        if (input.hasAttribute("readonly")) return;
+        input.value = last;
+        lockField(input);
+      });
+    });
+    document.querySelectorAll(".alarm-form").forEach(function (form) {
+      var panel = form.closest(".alarm-panel");
+      var pen = panel && panel.querySelector(".pen-btn");
+      var cancel = form.querySelector(".alarm-cancel");
+      var fields = function () {
+        return Array.prototype.slice.call(form.querySelectorAll("input:not([type=hidden])"));
+      };
+      var originals = [];
+      function snapshot() {
+        originals = fields().map(function (el) { return el.value; });
+      }
+      function restore() {
+        fields().forEach(function (el, i) {
+          if (originals[i] != null) el.value = originals[i];
+        });
+      }
+      function lockAlarms() {
+        form.classList.add("is-locked");
+        fields().forEach(lockField);
+      }
+      function unlockAlarms() {
+        snapshot();
+        form.classList.remove("is-locked");
+        fields().forEach(function (el) {
+          el.removeAttribute("readonly");
+          el.tabIndex = 0;
+        });
+        if (fields()[0]) fields()[0].focus();
+      }
+      snapshot();
+      lockAlarms();
+      if (pen) {
+        pen.addEventListener("click", function (event) {
+          event.preventDefault();
+          unlockAlarms();
+        });
+      }
+      if (cancel) {
+        cancel.addEventListener("click", function () {
+          restore();
+          lockAlarms();
+        });
+      }
+      form.addEventListener("keydown", function (event) {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          restore();
+          lockAlarms();
+        }
       });
     });
     {% if page != "instrument" %}

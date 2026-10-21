@@ -42,7 +42,11 @@
                       value="{{ inst.name }}"
                       maxlength="80"
                       required
+                      readonly
+                      tabindex="-1"
                     >
+                    {% set pen_label = "Edit instrument name" %}
+                    {% include "pen_btn.html" %}
                   </form>
                   <p>Address: {{ inst.instrument_id }}</p>
                 </div>
@@ -96,9 +100,13 @@
                           max="40"
                           value="{{ inst.setpoint_input }}"
                           required
+                          readonly
+                          tabindex="-1"
                         >
                         <span class="setpoint-unit">°C</span>
                       </div>
+                      {% set pen_label = "Edit setpoint" %}
+                      {% include "pen_btn.html" %}
                     </form>
                   </dd>
                 </div>

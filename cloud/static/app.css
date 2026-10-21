@@ -368,7 +368,8 @@ button {
 .instrument-card .power-toggle,
 .instrument-card .power-toggle *,
 .instrument-card .alarm-history-card-link,
-.instrument-card .alarm-history-card-link * {
+.instrument-card .alarm-history-card-link *,
+.instrument-card .pen-btn {
   pointer-events: auto;
 }
 
@@ -411,9 +412,14 @@ button {
 
 .name-inline {
   margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
 }
 
 .name-input {
+  flex: 1;
   width: 100%;
   min-width: 0;
   border: 1px solid transparent;
@@ -433,11 +439,73 @@ button {
   padding: 0;
 }
 
-.name-input:hover,
-.name-input:focus {
+.name-input:not([readonly]):hover,
+.name-input:not([readonly]):focus {
   border-color: var(--line-strong);
   background: var(--fog);
   outline: none;
+}
+
+.name-input[readonly] {
+  cursor: default;
+}
+
+.pen-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.pen-btn:hover,
+.pen-btn:focus-visible {
+  color: var(--nav);
+  background: var(--fog);
+  outline: none;
+}
+
+.alarm-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.alarm-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.alarm-form.is-locked .alarm-form-actions {
+  display: none;
+}
+
+.alarm-form.is-locked input {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  pointer-events: none;
+  -moz-appearance: textfield;
+}
+
+.alarm-form.is-locked input::-webkit-outer-spin-button,
+.alarm-form.is-locked input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.setpoint-input[readonly] {
+  cursor: default;
 }
 
 .switch {
@@ -792,6 +860,7 @@ button {
 .setpoint-inline {
   display: flex;
   align-items: center;
+  gap: 4px;
   margin: 0;
 }
 
@@ -2095,6 +2164,11 @@ th {
   .login-card input,
   .alarm-form input {
     font-size: 16px;
+  }
+
+  .pen-btn {
+    width: 44px;
+    height: 44px;
   }
 
   .name-input {

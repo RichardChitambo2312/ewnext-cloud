@@ -31,7 +31,11 @@
                   value="{{ site.store_name }}"
                   maxlength="80"
                   placeholder="{{ site.device_id }}"
+                  readonly
+                  tabindex="-1"
                 >
+                {% set pen_label = "Edit store name" %}
+                {% include "pen_btn.html" %}
               </form>
             </header>
             <p class="site-id-meta">Device ID {{ site.device_id }}</p>

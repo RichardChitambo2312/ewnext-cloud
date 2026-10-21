@@ -44,7 +44,11 @@
                         value="{{ site.store_name }}"
                         maxlength="80"
                         placeholder="{{ site.device_id }}"
+                        readonly
+                        tabindex="-1"
                       >
+                      {% set pen_label = "Edit store name" %}
+                      {% include "pen_btn.html" %}
                     </form>
                   </td>
                   <td>{{ site.count }} / {{ site.max_n }}</td>

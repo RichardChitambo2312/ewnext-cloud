@@ -12,7 +12,9 @@
               <input type="hidden" name="instrument_id" value="{{ inst.instrument_id }}">
               <input type="hidden" name="next" value="{{ inst.href }}">
               <label class="sr-only" for="nm-detail">Instrument name</label>
-              <input class="name-input name-input-lg" id="nm-detail" name="name" value="{{ inst.name }}" maxlength="80" required>
+              <input class="name-input name-input-lg" id="nm-detail" name="name" value="{{ inst.name }}" maxlength="80" required readonly tabindex="-1">
+              {% set pen_label = "Edit instrument name" %}
+              {% include "pen_btn.html" %}
             </form>
             <p class="page-sub">
               Site {{ inst.site_name }} · Device ID {{ inst.device_id }} · Address {{ inst.instrument_id }}
@@ -67,9 +69,13 @@
                   max="40"
                   value="{{ inst.setpoint_input }}"
                   required
+                  readonly
+                  tabindex="-1"
                 >
                 <span class="setpoint-unit">°C</span>
               </div>
+              {% set pen_label = "Edit setpoint" %}
+              {% include "pen_btn.html" %}
             </form>
           </article>
         </section>
@@ -77,33 +83,40 @@
         <section class="alarm-panel" aria-label="Cloud alarm settings">
           <div class="alarm-panel-head">
             <h2>Alarms</h2>
-            <a class="text-link" href="{{ inst.alarm_history_href }}">Alarm history</a>
+            <div class="alarm-panel-actions">
+              {% set pen_label = "Edit alarms" %}
+              {% include "pen_btn.html" %}
+              <a class="text-link" href="{{ inst.alarm_history_href }}">Alarm history</a>
+            </div>
           </div>
           <p class="alarm-hint">Cloud high-temperature alarm. Leave High Alarm Temperature blank to disable. Email is sent after the notification delay once the alarm is active.</p>
-          <form class="user-form alarm-form" method="post" action="/instrument/alarms">
+          <form class="user-form alarm-form is-locked" method="post" action="/instrument/alarms">
             <input type="hidden" name="device_id" value="{{ inst.device_id }}">
             <input type="hidden" name="instrument_id" value="{{ inst.instrument_id }}">
             <input type="hidden" name="next" value="{{ inst.href }}">
             <div class="alarm-grid">
               <div>
                 <label for="high-alarm-temp">High Alarm Temperature (°C)</label>
-                <input id="high-alarm-temp" name="high_alarm_temp" type="number" step="0.1" min="-50" max="80" value="{{ inst.alarm_high_temp_input }}" placeholder="Disabled">
+                <input id="high-alarm-temp" name="high_alarm_temp" type="number" step="0.1" min="-50" max="80" value="{{ inst.alarm_high_temp_input }}" placeholder="Disabled" readonly tabindex="-1">
               </div>
               <div>
                 <label for="high-alarm-delay">High Alarm Temp delay (min)</label>
-                <input id="high-alarm-delay" name="high_alarm_delay_min" type="number" step="1" min="0" max="10080" value="{{ inst.alarm_high_delay_input }}" placeholder="0">
+                <input id="high-alarm-delay" name="high_alarm_delay_min" type="number" step="1" min="0" max="10080" value="{{ inst.alarm_high_delay_input }}" placeholder="0" readonly tabindex="-1">
               </div>
               <div>
                 <label for="alarm-reset-temp">Alarm Reset temp (°C)</label>
-                <input id="alarm-reset-temp" name="alarm_reset_temp" type="number" step="0.1" min="-50" max="80" value="{{ inst.alarm_reset_temp_input }}" placeholder="Same as high">
+                <input id="alarm-reset-temp" name="alarm_reset_temp" type="number" step="0.1" min="-50" max="80" value="{{ inst.alarm_reset_temp_input }}" placeholder="Same as high" readonly tabindex="-1">
               </div>
               <div>
                 <label for="alarm-notify-delay">Alarm Notification delay (min)</label>
-                <input id="alarm-notify-delay" name="alarm_notify_delay_min" type="number" step="1" min="0" max="10080" value="{{ inst.alarm_notify_delay_input }}" placeholder="0">
+                <input id="alarm-notify-delay" name="alarm_notify_delay_min" type="number" step="1" min="0" max="10080" value="{{ inst.alarm_notify_delay_input }}" placeholder="0" readonly tabindex="-1">
                 <p class="alarm-hint">Email notification to users with access to this site.</p>
               </div>
             </div>
-            <button class="primary-btn" type="submit">Save alarms</button>
+            <div class="alarm-form-actions">
+              <button class="primary-btn" type="submit">Save alarms</button>
+              <button class="ghost-btn alarm-cancel" type="button">Cancel</button>
+            </div>
             {% if not smtp_configured %}
             <p class="alarm-hint">Email is not sending yet. Set SMTP_HOST and SMTP_FROM on the cloud service to enable notifications.</p>
             {% endif %}
