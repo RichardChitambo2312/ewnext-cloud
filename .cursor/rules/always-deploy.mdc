@@ -1,0 +1,15 @@
+---
+description: After cloud changes, commit, push, and Manual Deploy Render immediately
+alwaysApply: true
+---
+
+# Always deploy after changes
+
+When cloud code, templates, or static files change, ship them in the same turn. Do not wait for the user to say deploy.
+
+1. Commit the product files (never `ewnext.db`, `.env`, passwords, cookies, API keys, or DB credentials).
+2. `git push origin HEAD` to GitHub `RichardChitambo2312/ewnext-cloud` `main`.
+3. Render auto-deploy is off. Open `ewnext-cloud` (`srv-dbc8egdg1s2s739d71v0`) → Manual Deploy → Deploy latest commit.
+4. Wait until the deploy is live, then tell the user to hard-refresh `https://ewnext-cloud.onrender.com`.
+
+Router/UCI work is separate: do not reboot the TRB245 unless the user approves.

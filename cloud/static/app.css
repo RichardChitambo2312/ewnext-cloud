@@ -366,7 +366,9 @@ button {
 .instrument-card .name-inline,
 .instrument-card .name-inline *,
 .instrument-card .power-toggle,
-.instrument-card .power-toggle * {
+.instrument-card .power-toggle *,
+.instrument-card .alarm-history-card-link,
+.instrument-card .alarm-history-card-link * {
   pointer-events: auto;
 }
 
@@ -1064,6 +1066,100 @@ th {
   font-size: 1rem;
 }
 
+.alarm-panel-head,
+.alarm-history-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.alarm-panel-head h2,
+.alarm-history-head h2 {
+  margin: 0;
+}
+
+.text-link {
+  color: var(--nav);
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.text-link:hover {
+  text-decoration: underline;
+}
+
+.inst-tabs {
+  display: flex;
+  gap: 6px;
+  margin: -8px 0 16px;
+}
+
+.inst-tab {
+  border: 1px solid var(--line-strong);
+  background: var(--fog);
+  color: var(--ink-soft);
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.inst-tab.is-active {
+  background: var(--nav);
+  border-color: var(--nav);
+  color: #fff;
+}
+
+.alarm-history-kpis {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.alarm-history-kpis article {
+  background: var(--panel);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 14px 16px;
+  display: grid;
+  gap: 4px;
+}
+
+.alarm-history-kpis span {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.alarm-history-kpis strong {
+  font-size: 1.15rem;
+}
+
+.alarm-history-table {
+  min-width: 760px;
+}
+
+.alarm-history-table .status.alarm-active {
+  background: var(--alarm-soft);
+  color: var(--alarm);
+}
+
+.alarm-history-table .status.alarm-cleared {
+  background: var(--fog);
+  color: var(--muted);
+}
+
+.alarm-row-active td {
+  font-weight: 600;
+}
+
 .alarm-hint {
   margin: 0 0 12px;
   font-size: 0.8rem;
@@ -1087,6 +1183,10 @@ th {
   font-size: 0.75rem;
   font-weight: 600;
   color: var(--alarm);
+}
+
+.alarm-history-card-link {
+  margin: 8px 0 0;
 }
 
 .chart-panel {
@@ -2026,6 +2126,24 @@ th {
   }
 
   .alarm-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .inst-tabs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    margin-top: 0;
+  }
+
+  .inst-tab {
+    text-align: center;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .alarm-history-kpis {
     grid-template-columns: 1fr;
   }
 

@@ -173,6 +173,27 @@ def init_db() -> None:
         _ensure_column(cur, "instruments", "alarm_active_since", ts)
         _ensure_column(cur, "instruments", "alarm_email_sent", "INTEGER DEFAULT 0")
         _ensure_column(cur, "readings", "cloud_alarm", "INTEGER DEFAULT 0")
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS alarm_events (
+                id {serial},
+                device_id TEXT NOT NULL,
+                instrument_id INTEGER NOT NULL,
+                started_at {ts} NOT NULL,
+                cleared_at {ts},
+                peak_temp REAL,
+                start_temp REAL,
+                clear_temp REAL,
+                high_temp REAL,
+                reset_temp REAL,
+                email_sent INTEGER NOT NULL DEFAULT 0,
+                email_sent_at {ts}
+            )
+            """
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS alarm_events_lookup ON alarm_events (device_id, instrument_id, started_at)"
+        )
         _ensure_column(cur, "readings", "register_address", "INTEGER")
         _ensure_column(cur, "readings", "value", "TEXT")
         _ensure_column(cur, "readings", "raw_data", "TEXT")
@@ -773,6 +794,110 @@ def send_alarm_email(inst: dict, temp: float, high: float) -> bool:
         return False
 
 
+def _sql_row(row: Any, cur=None) -> dict | None:
+    if row is None:
+        return None
+    if isinstance(row, dict):
+        return row
+    if hasattr(row, "keys"):
+        return dict(row)
+    if cur is not None and getattr(cur, "description", None):
+        names = [c[0] if isinstance(c, tuple) else getattr(c, "name", c) for c in cur.description]
+        return dict(zip(names, row))
+    return None
+
+
+def open_alarm_event(cur, device_id: Any, instrument_id: Any) -> dict | None:
+    cur.execute(
+        q(
+            """
+            SELECT id, peak_temp, email_sent
+            FROM alarm_events
+            WHERE device_id=? AND instrument_id=? AND cleared_at IS NULL
+            ORDER BY started_at DESC
+            LIMIT 1
+            """
+        ),
+        (device_id, instrument_id),
+    )
+    return _sql_row(cur.fetchone(), cur)
+
+
+def record_alarm_history(
+    cur,
+    inst: dict,
+    now: datetime,
+    next_active: bool,
+    next_emailed: bool,
+    temp: float | None,
+    high: float | None,
+    reset: float | None,
+    started_at: datetime | None,
+) -> None:
+    device_id = inst.get("device_id")
+    instrument_id = inst.get("instrument_id")
+    if device_id is None or instrument_id is None:
+        return
+    open_row = open_alarm_event(cur, device_id, instrument_id)
+    if next_active:
+        if open_row is None:
+            start = started_at or now
+            cur.execute(
+                q(
+                    """
+                    INSERT INTO alarm_events (
+                        device_id, instrument_id, started_at, peak_temp, start_temp,
+                        high_temp, reset_temp, email_sent, email_sent_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """
+                ),
+                (
+                    device_id,
+                    instrument_id,
+                    start.isoformat(),
+                    temp,
+                    temp,
+                    high,
+                    reset,
+                    1 if next_emailed else 0,
+                    now.isoformat() if next_emailed else None,
+                ),
+            )
+            return
+        peak = as_float(open_row.get("peak_temp"))
+        if temp is not None and (peak is None or temp > peak):
+            peak = temp
+        emailed = 1 if next_emailed or int(open_row.get("email_sent") or 0) else 0
+        if next_emailed and not int(open_row.get("email_sent") or 0):
+            cur.execute(
+                q(
+                    """
+                    UPDATE alarm_events
+                    SET peak_temp=?, high_temp=?, reset_temp=?, email_sent=1, email_sent_at=?
+                    WHERE id=?
+                    """
+                ),
+                (peak, high, reset, now.isoformat(), open_row["id"]),
+            )
+        else:
+            cur.execute(
+                q(
+                    """
+                    UPDATE alarm_events
+                    SET peak_temp=?, high_temp=?, reset_temp=?, email_sent=?
+                    WHERE id=?
+                    """
+                ),
+                (peak, high, reset, emailed, open_row["id"]),
+            )
+        return
+    if open_row is not None:
+        cur.execute(
+            q("UPDATE alarm_events SET cleared_at=?, clear_temp=? WHERE id=?"),
+            (now.isoformat(), temp, open_row["id"]),
+        )
+
+
 def persist_cloud_alarm(cur, inst: dict, active: bool, high_since: datetime | None, active_since: datetime | None, emailed: bool) -> None:
     cur.execute(
         q(
@@ -847,6 +972,18 @@ def apply_cloud_alarm(cur, inst: dict, now: datetime | None = None) -> dict:
                 next_emailed = True
                 persist_cloud_alarm(cur, inst, next_active, next_high_since, next_active_since, True)
 
+    record_alarm_history(
+        cur,
+        inst,
+        now,
+        next_active=next_active,
+        next_emailed=next_emailed,
+        temp=temp,
+        high=high,
+        reset=None if high is None else reset,
+        started_at=next_active_since,
+    )
+
     inst["alarm_active"] = 1 if next_active else 0
     inst["alarm_high_since"] = next_high_since.isoformat() if next_high_since else None
     inst["alarm_active_since"] = next_active_since.isoformat() if next_active_since else None
@@ -920,6 +1057,29 @@ def format_temp(value: Any) -> str:
     if n == int(n):
         return f"{int(n)}°C"
     return f"{n:.1f}°C"
+
+
+def format_when(value: Any) -> str:
+    dt = parse_ts(value)
+    if dt is None:
+        return "—"
+    return dt.strftime("%d %b %Y %H:%M UTC")
+
+
+def format_duration(start: datetime | None, end: datetime | None) -> str:
+    if start is None or end is None:
+        return "—"
+    sec = max(0, int((end - start).total_seconds()))
+    if sec < 60:
+        return f"{sec}s"
+    mins = sec // 60
+    if mins < 60:
+        return f"{mins} min"
+    hours, rem = divmod(mins, 60)
+    if hours < 48:
+        return f"{hours}h {rem}m" if rem else f"{hours}h"
+    days, hours = divmod(hours, 24)
+    return f"{days}d {hours}h" if hours else f"{days}d"
 
 
 def display_name(label: Any, server_name: Any, instrument_id: int) -> str:
@@ -1050,7 +1210,7 @@ def build_alarm_feed(widgets: list[dict]) -> list[dict[str, Any]]:
                     "title": f"Alarm: {name}",
                     "detail": site,
                     "when": when,
-                    "href": href,
+                    "href": widget.get("alarm_history_href") or href,
                 }
             )
         elif not widget.get("online"):
@@ -1208,6 +1368,10 @@ def decorate_instrument(
             "setpoint_label": format_temp(pending_value if pending_value is not None else setpoint),
             "pending_setpoint": pending_value,
             "href": f"/instrument/{inst.get('instrument_id') or 0}?device={quote(str(inst.get('device_id') or ''), safe='')}",
+            "alarm_history_href": (
+                f"/instrument/{inst.get('instrument_id') or 0}/alarm-history"
+                f"?device={quote(str(inst.get('device_id') or ''), safe='')}"
+            ),
             "site_href": f"/sites/{quote(str(inst.get('device_id') or ''), safe='')}",
         }
     )
@@ -1267,6 +1431,63 @@ def load_history(device_id: str, instrument_id: int, range_key: str) -> list[dic
         )
         rows = fetchall(cur)
     return downsample_rows([history_point(r) for r in rows], HISTORY_MAX_POINTS)
+
+
+def decorate_alarm_event(row: dict, now: datetime | None = None) -> dict:
+    now = now or datetime.now(timezone.utc)
+    started = parse_ts(row.get("started_at"))
+    cleared = parse_ts(row.get("cleared_at"))
+    active = cleared is None
+    end = cleared or now
+    emailed = bool(int(row.get("email_sent") or 0))
+    row.update(
+        {
+            "active": active,
+            "status_label": "Active" if active else "Cleared",
+            "status_kind": "active" if active else "cleared",
+            "started_label": format_when(started),
+            "cleared_label": "—" if active else format_when(cleared),
+            "duration_label": format_duration(started, end),
+            "peak_label": format_temp(row.get("peak_temp")),
+            "start_temp_label": format_temp(row.get("start_temp")),
+            "clear_temp_label": format_temp(row.get("clear_temp")),
+            "high_label": format_temp(row.get("high_temp")),
+            "reset_label": format_temp(row.get("reset_temp")),
+            "email_label": format_when(row.get("email_sent_at")) if emailed else "Not sent",
+        }
+    )
+    return row
+
+
+def load_alarm_history(device_id: str, instrument_id: int) -> list[dict]:
+    now = datetime.now(timezone.utc)
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            q(
+                """
+                SELECT id, started_at, cleared_at, peak_temp, start_temp, clear_temp,
+                       high_temp, reset_temp, email_sent, email_sent_at
+                FROM alarm_events
+                WHERE device_id=? AND instrument_id=?
+                ORDER BY started_at DESC
+                LIMIT 200
+                """
+            ),
+            (device_id, instrument_id),
+        )
+        rows = fetchall(cur)
+    return [decorate_alarm_event(r, now) for r in rows]
+
+
+def find_scoped_instrument(widgets: list[dict], instrument_id: int, device_id: str = "") -> dict | None:
+    wanted = (device_id or "").strip()
+    for widget in widgets:
+        if int(widget.get("instrument_id") or 0) != instrument_id:
+            continue
+        if not wanted or str(widget.get("device_id")) == wanted:
+            return widget
+    return None
 
 
 def fetchall(cur) -> list[dict]:
@@ -1682,23 +1903,21 @@ def site_detail(request: Request, device_id: str):
     return templates.TemplateResponse("site.html", ctx)
 
 
-@app.get("/instrument/{instrument_id}", response_class=HTMLResponse)
-def instrument_page(request: Request, instrument_id: int, device: str = "", range: str = "24h"):
-    if not logged_in(request):
-        return RedirectResponse("/login", status_code=302)
+def _instrument_page_context(request: Request, instrument_id: int, device: str = "") -> tuple[dict, dict]:
     ctx = dashboard_shell(request)
-    device_id = (device or "").strip()
-    inst = None
-    for widget in ctx["instruments"]:
-        if int(widget.get("instrument_id") or 0) != instrument_id:
-            continue
-        if not device_id or str(widget.get("device_id")) == device_id:
-            inst = widget
-            break
+    inst = find_scoped_instrument(ctx["instruments"], instrument_id, device)
     if inst is None:
         raise HTTPException(404, "instrument not found")
     if not can_access_site(request, str(inst.get("device_id") or "")):
         raise HTTPException(403, "no access to this site")
+    return ctx, inst
+
+
+@app.get("/instrument/{instrument_id}", response_class=HTMLResponse)
+def instrument_page(request: Request, instrument_id: int, device: str = "", range: str = "24h"):
+    if not logged_in(request):
+        return RedirectResponse("/login", status_code=302)
+    ctx, inst = _instrument_page_context(request, instrument_id, device)
     range_key = range if range in HISTORY_RANGES else "24h"
     attach_session(ctx, request, "instrument")
     ctx.update(
@@ -1715,6 +1934,24 @@ def instrument_page(request: Request, instrument_id: int, device: str = "", rang
         }
     )
     return templates.TemplateResponse("instrument.html", ctx)
+
+
+@app.get("/instrument/{instrument_id}/alarm-history", response_class=HTMLResponse)
+def instrument_alarm_history(request: Request, instrument_id: int, device: str = ""):
+    if not logged_in(request):
+        return RedirectResponse("/login", status_code=302)
+    ctx, inst = _instrument_page_context(request, instrument_id, device)
+    events = load_alarm_history(str(inst.get("device_id") or ""), instrument_id)
+    attach_session(ctx, request, "alarm-history")
+    ctx.update(
+        {
+            "inst": inst,
+            "alarm_events": events,
+            "alarm_active_n": sum(1 for e in events if e.get("active")),
+            "alarm_total_n": len(events),
+        }
+    )
+    return templates.TemplateResponse("alarm_history.html", ctx)
 
 
 @app.get("/api/instruments/{instrument_id}/history")

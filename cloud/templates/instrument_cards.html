@@ -83,6 +83,7 @@
             {% if inst.alarm_configured %}
             <p class="alarm-set-note">High alarm {{ inst.alarm_high_temp_input }}°C</p>
             {% endif %}
+            <p class="alarm-history-card-link"><a class="text-link" href="{{ inst.alarm_history_href }}">Alarm history</a></p>
           </article>
           {% endfor %}
         </div>

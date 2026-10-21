@@ -1,0 +1,4 @@
+        <nav class="inst-tabs" aria-label="Instrument pages">
+          <a class="inst-tab{% if page == 'instrument' %} is-active{% endif %}" href="{{ inst.href }}">Live</a>
+          <a class="inst-tab{% if page == 'alarm-history' %} is-active{% endif %}" href="{{ inst.alarm_history_href }}">Alarm history</a>
+        </nav>

@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Alarm history — {{ inst.name }} — Keyview Cloud{% endblock %}
+{% block content %}
+        <div class="page-head">
+          <div>
+            <p class="eyebrow"><a href="/sites">Sites</a> · <a href="{{ inst.site_href }}">{{ inst.site_name }}</a> · <a href="{{ inst.href }}">{{ inst.name }}</a></p>
+            <form class="name-inline" method="post" action="/instrument/name">
+              <input type="hidden" name="device_id" value="{{ inst.device_id }}">
+              <input type="hidden" name="instrument_id" value="{{ inst.instrument_id }}">
+              <input type="hidden" name="next" value="{{ inst.alarm_history_href }}">
+              <label class="sr-only" for="nm-history">Instrument name</label>
+              <input class="name-input name-input-lg" id="nm-history" name="name" value="{{ inst.name }}" maxlength="80" required>
+            </form>
+            <p class="page-sub">
+              Cloud high-temperature alarm history for address {{ inst.instrument_id }}.
+              <span class="online-flag">
+                <span class="dot {% if inst.online %}dot-online{% else %}dot-offline{% endif %}"></span>
+                {{ "Online" if inst.online else "Offline" }}
+              </span>
+            </p>
+          </div>
+          <form class="power-toggle" method="post" action="/power">
+            <input type="hidden" name="device_id" value="{{ inst.device_id }}">
+            <input type="hidden" name="instrument_id" value="{{ inst.instrument_id }}">
+            <input type="hidden" name="next" value="{{ inst.alarm_history_href }}">
+            <input type="hidden" name="power" value="{{ 1 if inst.powered else 0 }}">
+            <label class="switch{% if inst.pending_power is not none %} is-queued{% endif %}">
+              <input class="power-input" type="checkbox" {% if inst.powered %}checked{% endif %} aria-label="Controller power">
+              <span class="switch-ui"></span>
+              <span class="switch-label">{% if inst.powered %}On{% else %}Off{% endif %}</span>
+            </label>
+          </form>
+        </div>
+        {% include "instrument_tabs.html" %}
+        {% include "status_strip.html" %}
+
+        <section class="alarm-history-kpis" aria-label="Alarm history summary">
+          <article>
+            <span>Recorded alarms</span>
+            <strong>{{ alarm_total_n }}</strong>
+          </article>
+          <article>
+            <span>Currently active</span>
+            <strong class="{% if alarm_active_n %}kpi-alarm{% endif %}">{{ alarm_active_n }}</strong>
+          </article>
+          <article>
+            <span>High alarm set</span>
+            <strong>{% if inst.alarm_configured %}{{ inst.alarm_high_temp_input }}°C{% else %}Off{% endif %}</strong>
+          </article>
+        </section>
+
+        <section class="panel alarm-history-panel" aria-label="Alarm history">
+          <div class="alarm-history-head">
+            <h2>Alarm history</h2>
+            <a class="text-link" href="{{ inst.href }}">Edit alarm settings</a>
+          </div>
+          {% if not alarm_events %}
+          <p class="muted">No cloud alarms recorded yet. History starts when temperature stays above the high alarm for the configured delay.</p>
+          {% else %}
+          <div class="table-wrap">
+            <table class="alarm-history-table">
+              <thead>
+                <tr>
+                  <th>Status</th>
+                  <th>Started</th>
+                  <th>Cleared</th>
+                  <th>Duration</th>
+                  <th>Peak temp</th>
+                  <th>High set</th>
+                  <th>Email</th>
+                </tr>
+              </thead>
+              <tbody>
+              {% for event in alarm_events %}
+                <tr class="alarm-row-{{ event.status_kind }}">
+                  <td><span class="status alarm-{{ event.status_kind }}">{{ event.status_label }}</span></td>
+                  <td>{{ event.started_label }}</td>
+                  <td>{{ event.cleared_label }}</td>
+                  <td>{{ event.duration_label }}</td>
+                  <td>{{ event.peak_label }}</td>
+                  <td>{{ event.high_label }}</td>
+                  <td>{{ event.email_label }}</td>
+                </tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% endif %}
+        </section>
+{% endblock %}
