@@ -263,6 +263,7 @@ def init_db() -> None:
         _ensure_org_tree(cur)
         _backfill_sites(cur)
         _backfill_subscriptions(cur)
+        _backfill_instrument_labels(cur)
         conn.commit()
 
 
@@ -1279,6 +1280,18 @@ def display_name(label: Any, server_name: Any, instrument_id: int) -> str:
     return raw.replace("_", " ")
 
 
+def _backfill_instrument_labels(cur) -> None:
+    cur.execute("SELECT device_id, instrument_id, server_name, label FROM instruments")
+    for row in fetchall(cur):
+        if str(row.get("label") or "").strip():
+            continue
+        label = display_name(None, row.get("server_name"), int(row.get("instrument_id") or 0))
+        cur.execute(
+            q("UPDATE instruments SET label=? WHERE device_id=? AND instrument_id=?"),
+            (label, row.get("device_id"), row.get("instrument_id")),
+        )
+
+
 def parse_ts(value: Any) -> datetime | None:
     if value is None:
         return None
@@ -1761,16 +1774,18 @@ async def ingest(request: Request) -> JSONResponse:
         if last_setpoint is None and prev:
             last_setpoint = prev[0] if not isinstance(prev, dict) else prev.get("last_setpoint")
         stale = 1 if body.get("stale") else 0
+        frozen_label = display_name(None, body.get("server_name"), instrument_id)
         if site_accepts_instrument(cur, device_id, instrument_id):
           if _is_pg():
             cur.execute(
                 """
                 INSERT INTO instruments (
-                    device_id, instrument_id, server_name, last_probe1, last_probe2,
+                    device_id, instrument_id, server_name, label, last_probe1, last_probe2,
                     last_setpoint, last_flags, last_stale, last_seen
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (device_id, instrument_id) DO UPDATE SET
-                    server_name = EXCLUDED.server_name,
+                    server_name = COALESCE(NULLIF(TRIM(instruments.server_name), ''), EXCLUDED.server_name),
+                    label = COALESCE(NULLIF(TRIM(instruments.label), ''), EXCLUDED.label),
                     last_probe1 = EXCLUDED.last_probe1,
                     last_probe2 = EXCLUDED.last_probe2,
                     last_setpoint = COALESCE(EXCLUDED.last_setpoint, instruments.last_setpoint),
@@ -1782,6 +1797,7 @@ async def ingest(request: Request) -> JSONResponse:
                     device_id,
                     instrument_id,
                     body.get("server_name"),
+                    frozen_label,
                     probe1,
                     probe2,
                     last_setpoint,
@@ -1794,11 +1810,12 @@ async def ingest(request: Request) -> JSONResponse:
             cur.execute(
                 """
                 INSERT INTO instruments (
-                    device_id, instrument_id, server_name, last_probe1, last_probe2,
+                    device_id, instrument_id, server_name, label, last_probe1, last_probe2,
                     last_setpoint, last_flags, last_stale, last_seen
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (device_id, instrument_id) DO UPDATE SET
-                    server_name = excluded.server_name,
+                    server_name = COALESCE(NULLIF(TRIM(instruments.server_name), ''), excluded.server_name),
+                    label = COALESCE(NULLIF(TRIM(instruments.label), ''), excluded.label),
                     last_probe1 = excluded.last_probe1,
                     last_probe2 = excluded.last_probe2,
                     last_setpoint = COALESCE(excluded.last_setpoint, instruments.last_setpoint),
@@ -1810,6 +1827,7 @@ async def ingest(request: Request) -> JSONResponse:
                     device_id,
                     instrument_id,
                     body.get("server_name"),
+                    frozen_label,
                     probe1,
                     probe2,
                     last_setpoint,
