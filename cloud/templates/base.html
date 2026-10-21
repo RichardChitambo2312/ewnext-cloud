@@ -2,13 +2,25 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#2980b9">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>{% block title %}Keyview Cloud{% endblock %}</title>
   <link rel="stylesheet" href="/static/app.css">
   {% block extra_head %}{% endblock %}
 </head>
 <body>
   <div class="shell">
+    <header class="mobile-bar">
+      <a class="mobile-brand" href="/" aria-label="Keyview">
+        <img src="/static/brand/keyview-logo-white.png" alt="Keyview Intelligent Monitoring">
+      </a>
+      <form method="post" action="/logout">
+        <button class="mobile-logout" type="submit">Sign out</button>
+      </form>
+    </header>
     <aside class="sidebar">
       <div class="sidebar-brand">
         <a href="/" aria-label="Keyview">
@@ -52,6 +64,16 @@
         {% block content %}{% endblock %}
       </main>
     </div>
+    <nav class="tabbar" aria-label="App">
+      <a class="tab-link{% if page == 'instruments' or page == 'instrument' %} active{% endif %}" href="/">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+        <span>Instruments</span>
+      </a>
+      <a class="tab-link{% if page == 'jobs' %} active{% endif %}" href="/jobs">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 6h14M5 12h14M5 18h9" stroke-linecap="round"/></svg>
+        <span>Jobs</span>
+      </a>
+    </nav>
   </div>
   <script>
     document.querySelectorAll(".name-inline").forEach(function (form) {
