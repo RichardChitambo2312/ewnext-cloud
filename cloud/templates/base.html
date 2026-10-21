@@ -8,7 +8,7 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>{% block title %}Keyview Cloud{% endblock %}</title>
-  <link rel="stylesheet" href="/static/app.css?v=alarm2">
+  <link rel="stylesheet" href="/static/app.css?v=alarm3">
   {% block extra_head %}{% endblock %}
 </head>
 <body>
@@ -220,20 +220,44 @@
       var input = form.querySelector(".setpoint-input");
       var pill = form.querySelector(".setpoint-pill");
       if (!input) return;
-      var last = input.value;
+      function parseSetpoint(raw) {
+        var n = Number(String(raw == null ? "" : raw).replace(/,/g, "."));
+        return isFinite(n) ? n : NaN;
+      }
+      function formatSetpoint(raw) {
+        var n = parseSetpoint(raw);
+        if (!isFinite(n)) return "";
+        if (Math.abs(n - Math.round(n)) < 1e-9) return String(Math.round(n));
+        return (Math.round(n * 10) / 10).toFixed(1);
+      }
+      function normalizeSetpointInput() {
+        var next = String(input.value || "").replace(/,/g, ".");
+        if (next !== input.value) {
+          var start = input.selectionStart;
+          input.value = next;
+          if (start != null) {
+            try { input.setSelectionRange(start, start); } catch (err) {}
+          }
+        }
+        return next;
+      }
+      var last = formatSetpoint(input.value);
+      input.value = last;
       form.addEventListener("submit", function (event) {
+        normalizeSetpointInput();
         if (!input.checkValidity() || input.value === "" || input.value === last) {
           event.preventDefault();
         }
       });
+      input.addEventListener("input", normalizeSetpointInput);
       function applyLiveSetpoint(live) {
         if (live === null || live === undefined || live === "") return;
-        input.value = live;
-        last = String(live);
+        input.value = formatSetpoint(live);
+        last = input.value;
         if (pill) pill.classList.remove("is-queued");
       }
       function closeEnough(a, b) {
-        return Math.abs(Number(a) - Number(b)) < 0.051;
+        return Math.abs(parseSetpoint(a) - parseSetpoint(b)) < 0.051;
       }
       function pullControllerSetpoint(queued) {
         var deviceId = form.querySelector("[name=device_id]").value;
@@ -260,7 +284,11 @@
       input.addEventListener("keydown", function (event) {
         if (event.key !== "Enter") return;
         event.preventDefault();
+        normalizeSetpointInput();
+        var typed = parseSetpoint(input.value);
         if (!input.checkValidity() || input.value === "" || input.value === last) return;
+        if (!isFinite(typed) || typed < -50 || typed > 40) return;
+        input.value = formatSetpoint(typed);
         var next = input.value;
         last = next;
         if (pill) pill.classList.add("is-queued");

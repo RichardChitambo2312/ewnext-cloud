@@ -1367,6 +1367,7 @@ def decorate_instrument(
             "defrost_label": format_temp(inst.get("last_probe2")),
             "setpoint_label": format_temp(pending_value if pending_value is not None else setpoint),
             "pending_setpoint": pending_value,
+            "setpoint_input": format_alarm_input(pending_value if pending_value is not None else setpoint),
             "href": f"/instrument/{inst.get('instrument_id') or 0}?device={quote(str(inst.get('device_id') or ''), safe='')}",
             "alarm_history_href": (
                 f"/instrument/{inst.get('instrument_id') or 0}/alarm-history"
@@ -2460,21 +2461,22 @@ def set_setpoint(
     request: Request,
     instrument_id: int = Form(...),
     device_id: str = Form(...),
-    setpoint_c: float = Form(...),
+    setpoint_c: str = Form(...),
     next: str = Form(""),
 ):
     require_site_access(request, device_id)
-    if setpoint_c < -50 or setpoint_c > 40:
+    value = as_float(str(setpoint_c).replace(",", "."))
+    if value is None or value < -50 or value > 40:
         raise HTTPException(400, "setpoint out of range")
-    raw = int(round(setpoint_c * 10))
-    _queue_job(device_id, instrument_id, "setpoint", SETPOINT_REGISTER, raw, setpoint_c)
+    raw = int(round(value * 10))
+    _queue_job(device_id, instrument_id, "setpoint", SETPOINT_REGISTER, raw, value)
     if _wants_json(request):
         return JSONResponse(
             {
                 "ok": True,
                 "queued": True,
                 "instrument_id": instrument_id,
-                "setpoint_c": setpoint_c,
+                "setpoint_c": value,
             }
         )
     return _redirect_next(next)
