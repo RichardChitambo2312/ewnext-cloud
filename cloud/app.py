@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import math
 import os
@@ -27,7 +29,10 @@ POWER_ON_MASK = 4  # Ronon Device on
 POWER_OFF_MASK = 8  # RoFFoFF Device off
 STANDBY_MASK = 1  # STD-BY in analog RAM 4115
 NAME_MAX_LEN = 80
+EMAIL_MAX_LEN = 120
+PASSWORD_MIN_LEN = 8
 PENDING_SETPOINT_TTL_SEC = 10
+HASH_ROUNDS = 200_000
 HISTORY_RANGES = {
     "1h": 3600,
     "24h": 86400,
@@ -164,6 +169,27 @@ def init_db() -> None:
         cur.execute(
             "CREATE INDEX IF NOT EXISTS readings_lookup ON readings (device_id, instrument_id, received_at)"
         )
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS app_users (
+                id {serial},
+                name TEXT NOT NULL,
+                email TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'operator',
+                created_at {ts} NOT NULL
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_sites (
+                user_id INTEGER NOT NULL,
+                device_id TEXT NOT NULL,
+                PRIMARY KEY (user_id, device_id)
+            )
+            """
+        )
         conn.commit()
 
 
@@ -235,13 +261,140 @@ def require_router_key(request: Request) -> None:
         raise HTTPException(401, "unauthorized")
 
 
+def hash_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), HASH_ROUNDS)
+    return f"pbkdf2$sha256${HASH_ROUNDS}${salt}${dk.hex()}"
+
+
+def verify_password(password: str, stored: str) -> bool:
+    try:
+        _algo, hash_name, rounds, salt, digest = str(stored).split("$", 4)
+        dk = hashlib.pbkdf2_hmac(
+            hash_name, password.encode("utf-8"), salt.encode("utf-8"), int(rounds)
+        )
+        return hmac.compare_digest(dk.hex(), digest)
+    except Exception:
+        return False
+
+
+def normalize_email(value: Any) -> str:
+    return str(value or "").strip().lower()[:EMAIL_MAX_LEN]
+
+
+def form_id_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    out: list[str] = []
+    for item in value:
+        text = str(item or "").strip()
+        if text and text not in out:
+            out.append(text)
+    return out
+
+
 def logged_in(request: Request) -> bool:
-    return bool(request.session.get("admin"))
+    return bool(request.session.get("admin") or request.session.get("uid") is not None)
+
+
+def is_manager(request: Request) -> bool:
+    if request.session.get("admin"):
+        return True
+    return str(request.session.get("role") or "") == "manager"
+
+
+def session_name(request: Request) -> str:
+    return str(request.session.get("name") or "Admin")
+
+
+def allowed_site_ids(request: Request) -> set[str] | None:
+    if is_manager(request):
+        return None
+    return {str(s) for s in (request.session.get("sites") or [])}
+
+
+def can_access_site(request: Request, device_id: str) -> bool:
+    allowed = allowed_site_ids(request)
+    if allowed is None:
+        return True
+    return str(device_id) in allowed
 
 
 def require_admin(request: Request) -> None:
     if not logged_in(request):
         raise HTTPException(401, "login required")
+
+
+def require_manager(request: Request) -> None:
+    require_admin(request)
+    if not is_manager(request):
+        raise HTTPException(403, "manager only")
+
+
+def require_site_access(request: Request, device_id: str) -> None:
+    require_admin(request)
+    if not can_access_site(request, device_id):
+        raise HTTPException(403, "no access to this site")
+
+
+def attach_session(ctx: dict, request: Request, page: str) -> dict:
+    ctx.update(
+        {
+            "request": request,
+            "page": page,
+            "admin_name": session_name(request),
+            "is_manager": is_manager(request),
+        }
+    )
+    return ctx
+
+
+def load_user_sites(user_id: int) -> list[str]:
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(q("SELECT device_id FROM user_sites WHERE user_id=? ORDER BY device_id"), (user_id,))
+        return [str(row.get("device_id") if isinstance(row, dict) else row[0]) for row in fetchall(cur)]
+
+
+def start_user_session(request: Request, user: dict) -> None:
+    request.session.clear()
+    request.session["uid"] = int(user["id"])
+    request.session["name"] = user["name"]
+    request.session["role"] = user["role"]
+    request.session["admin"] = user["role"] == "manager"
+    request.session["sites"] = [] if user["role"] == "manager" else load_user_sites(int(user["id"]))
+
+
+def start_admin_session(request: Request) -> None:
+    request.session.clear()
+    request.session["admin"] = True
+    request.session["role"] = "manager"
+    request.session["name"] = "Admin"
+    request.session["uid"] = None
+    request.session["sites"] = []
+
+
+def find_user_by_email(email: str) -> dict | None:
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            q("SELECT id, name, email, password_hash, role FROM app_users WHERE email=?"),
+            (email,),
+        )
+        row = cur.fetchone()
+    if not row:
+        return None
+    if isinstance(row, dict) or hasattr(row, "keys"):
+        return dict(row)
+    return {
+        "id": row[0],
+        "name": row[1],
+        "email": row[2],
+        "password_hash": row[3],
+        "role": row[4],
+    }
 
 
 def as_int(value: Any) -> int | None:
@@ -868,7 +1021,7 @@ async def job_result(job_id: int, request: Request) -> dict:
     return {"ok": True}
 
 
-def dashboard_shell() -> dict:
+def dashboard_shell(request: Request | None = None) -> dict:
     with db() as conn:
         cur = conn.cursor()
         cur.execute(
@@ -880,6 +1033,11 @@ def dashboard_shell() -> dict:
             """
         )
         instruments = fetchall(cur)
+    allowed = allowed_site_ids(request) if request is not None else None
+    if allowed is not None:
+        instruments = [row for row in instruments if str(row.get("device_id")) in allowed]
+    with db() as conn:
+        cur = conn.cursor()
         cur.execute(
             """
             SELECT id, device_id, instrument_id, kind, display_value, status, created_at
@@ -959,14 +1117,15 @@ def dashboard_shell() -> dict:
         "site_n": len(sites),
         "kpis": compute_kpis(widgets, sites),
         "alarm_feed": build_alarm_feed(widgets),
-        "admin_name": "Admin",
+        "admin_name": session_name(request) if request is not None else "Admin",
+        "is_manager": is_manager(request) if request is not None else True,
     }
 
 
 @app.get("/api/instruments")
 def instruments_api(request: Request):
     require_admin(request)
-    ctx = dashboard_shell()
+    ctx = dashboard_shell(request)
     return [
         {
             "device_id": w.get("device_id"),
@@ -985,8 +1144,7 @@ def instruments_api(request: Request):
 def home(request: Request):
     if not logged_in(request):
         return RedirectResponse("/login", status_code=302)
-    ctx = dashboard_shell()
-    ctx.update({"request": request, "page": "dashboard"})
+    ctx = attach_session(dashboard_shell(request), request, "dashboard")
     return templates.TemplateResponse("dashboard.html", ctx)
 
 
@@ -994,8 +1152,7 @@ def home(request: Request):
 def sites_page(request: Request):
     if not logged_in(request):
         return RedirectResponse("/login", status_code=302)
-    ctx = dashboard_shell()
-    ctx.update({"request": request, "page": "sites"})
+    ctx = attach_session(dashboard_shell(request), request, "sites")
     return templates.TemplateResponse("sites.html", ctx)
 
 
@@ -1003,21 +1160,17 @@ def sites_page(request: Request):
 def site_detail(request: Request, device_id: str):
     if not logged_in(request):
         return RedirectResponse("/login", status_code=302)
-    ctx = dashboard_shell()
+    if not can_access_site(request, device_id):
+        raise HTTPException(403, "no access to this site")
+    ctx = dashboard_shell(request)
     site = next((row for row in ctx["sites"] if row.get("device_id") == device_id), None)
     if site is None:
         raise HTTPException(404, "site not found")
     scoped = list(site.get("instruments") or [])
     ctx["kpis"] = compute_kpis(scoped, [site])
     ctx["alarm_feed"] = build_alarm_feed(scoped)
-    ctx.update(
-        {
-            "request": request,
-            "page": "site",
-            "site": site,
-            "sites": [site],
-        }
-    )
+    attach_session(ctx, request, "site")
+    ctx.update({"site": site, "sites": [site]})
     return templates.TemplateResponse("site.html", ctx)
 
 
@@ -1025,7 +1178,7 @@ def site_detail(request: Request, device_id: str):
 def instrument_page(request: Request, instrument_id: int, device: str = "", range: str = "24h"):
     if not logged_in(request):
         return RedirectResponse("/login", status_code=302)
-    ctx = dashboard_shell()
+    ctx = dashboard_shell(request)
     device_id = (device or "").strip()
     inst = None
     for widget in ctx["instruments"]:
@@ -1036,12 +1189,12 @@ def instrument_page(request: Request, instrument_id: int, device: str = "", rang
             break
     if inst is None:
         raise HTTPException(404, "instrument not found")
+    if not can_access_site(request, str(inst.get("device_id") or "")):
+        raise HTTPException(403, "no access to this site")
     range_key = range if range in HISTORY_RANGES else "24h"
+    attach_session(ctx, request, "instrument")
     ctx.update(
         {
-            "request": request,
-            "page": "instrument",
-            "admin_name": "Admin",
             "inst": inst,
             "range_key": range_key,
             "ranges": [
@@ -1061,13 +1214,14 @@ def instrument_history(request: Request, instrument_id: int, device: str = "", r
     require_admin(request)
     device_id = (device or "").strip()
     if not device_id:
-        ctx = dashboard_shell()
+        ctx = dashboard_shell(request)
         for widget in ctx["instruments"]:
             if int(widget.get("instrument_id") or 0) == instrument_id:
                 device_id = str(widget.get("device_id") or "")
                 break
     if not device_id:
         raise HTTPException(404, "instrument not found")
+    require_site_access(request, device_id)
     range_key = range if range in HISTORY_RANGES else "24h"
     return {
         "instrument_id": instrument_id,
@@ -1081,7 +1235,9 @@ def instrument_history(request: Request, instrument_id: int, device: str = "", r
 def jobs_page(request: Request):
     if not logged_in(request):
         return RedirectResponse("/login", status_code=302)
-    ctx = dashboard_shell()
+    if not is_manager(request):
+        return RedirectResponse("/", status_code=302)
+    ctx = dashboard_shell(request)
     with db() as conn:
         cur = conn.cursor()
         cur.execute(
@@ -1100,16 +1256,190 @@ def jobs_page(request: Request):
             """
         )
         readings = fetchall(cur)
+    attach_session(ctx, request, "jobs")
+    ctx.update({"jobs": jobs, "readings": readings})
+    return templates.TemplateResponse("jobs.html", ctx)
+
+
+def known_site_ids() -> list[str]:
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT DISTINCT device_id FROM instruments ORDER BY device_id")
+        rows = fetchall(cur)
+    ids: list[str] = []
+    for row in rows:
+        value = str(row.get("device_id") if isinstance(row, dict) else row[0] or "").strip()
+        if value and value not in ids:
+            ids.append(value)
+    return ids
+
+
+def load_app_users() -> list[dict]:
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, name, email, role, created_at FROM app_users ORDER BY name, email"
+        )
+        users = fetchall(cur)
+        cur.execute("SELECT user_id, device_id FROM user_sites ORDER BY device_id")
+        links = fetchall(cur)
+    by_user: dict[int, list[str]] = {}
+    for link in links:
+        uid = int(link.get("user_id") if isinstance(link, dict) else link[0])
+        site = str(link.get("device_id") if isinstance(link, dict) else link[1])
+        by_user.setdefault(uid, []).append(site)
+    out = []
+    for user in users:
+        item = dict(user)
+        item["sites"] = by_user.get(int(item["id"]), [])
+        out.append(item)
+    return out
+
+
+def users_page_ctx(request: Request, error: str | None = None, notice: str | None = None) -> dict:
+    ctx = dashboard_shell(request)
+    attach_session(ctx, request, "users")
     ctx.update(
         {
-            "request": request,
-            "page": "jobs",
-            "admin_name": "Admin",
-            "jobs": jobs,
-            "readings": readings,
+            "app_users": load_app_users(),
+            "known_sites": known_site_ids(),
+            "error": error,
+            "notice": notice,
         }
     )
-    return templates.TemplateResponse("jobs.html", ctx)
+    return ctx
+
+
+@app.get("/users", response_class=HTMLResponse)
+def users_page(request: Request):
+    if not logged_in(request):
+        return RedirectResponse("/login", status_code=302)
+    if not is_manager(request):
+        return RedirectResponse("/", status_code=302)
+    return templates.TemplateResponse("users.html", users_page_ctx(request))
+
+
+def replace_user_sites(cur, user_id: int, site_ids: list[str], known: list[str]) -> None:
+    cur.execute(q("DELETE FROM user_sites WHERE user_id=?"), (user_id,))
+    allowed = set(known)
+    for site in site_ids:
+        if site not in allowed:
+            continue
+        cur.execute(q("INSERT INTO user_sites (user_id, device_id) VALUES (?, ?)"), (user_id, site))
+
+
+@app.post("/users", response_class=HTMLResponse)
+def users_create(
+    request: Request,
+    name: str = Form(...),
+    email: str = Form(...),
+    password: str = Form(...),
+    role: str = Form("operator"),
+    site_id: Any = Form(None),
+):
+    if not logged_in(request):
+        return RedirectResponse("/login", status_code=302)
+    if not is_manager(request):
+        raise HTTPException(403, "manager only")
+    display = " ".join(str(name or "").split())
+    mail = normalize_email(email)
+    role_name = "manager" if str(role).strip().lower() == "manager" else "operator"
+    sites = form_id_list(site_id)
+    if not display or len(display) > NAME_MAX_LEN:
+        return templates.TemplateResponse(
+            "users.html", users_page_ctx(request, error="Name must be 1 to 80 characters"), status_code=400
+        )
+    if "@" not in mail or "." not in mail.split("@")[-1]:
+        return templates.TemplateResponse(
+            "users.html", users_page_ctx(request, error="Enter a valid email address"), status_code=400
+        )
+    if len(password) < PASSWORD_MIN_LEN:
+        return templates.TemplateResponse(
+            "users.html",
+            users_page_ctx(request, error=f"Password must be at least {PASSWORD_MIN_LEN} characters"),
+            status_code=400,
+        )
+    if role_name == "operator" and not sites:
+        return templates.TemplateResponse(
+            "users.html",
+            users_page_ctx(request, error="Choose at least one site for this user"),
+            status_code=400,
+        )
+    known = known_site_ids()
+    try:
+        with db() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                q(
+                    """
+                    INSERT INTO app_users (name, email, password_hash, role, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """
+                ),
+                (display, mail, hash_password(password), role_name, now_iso()),
+            )
+            if _is_pg():
+                cur.execute(q("SELECT id FROM app_users WHERE email=?"), (mail,))
+                row = cur.fetchone()
+                user_id = int(row["id"] if isinstance(row, dict) or hasattr(row, "keys") else row[0])
+            else:
+                user_id = int(cur.lastrowid)
+            if role_name == "operator":
+                replace_user_sites(cur, user_id, sites, known)
+    except Exception as exc:
+        text = str(exc).lower()
+        if "unique" in text or "duplicate" in text:
+            return templates.TemplateResponse(
+                "users.html", users_page_ctx(request, error="That email is already in use"), status_code=400
+            )
+        raise
+    return templates.TemplateResponse("users.html", users_page_ctx(request, notice="User added."))
+
+
+@app.post("/users/{user_id}/access", response_class=HTMLResponse)
+def users_access(
+    request: Request,
+    user_id: int,
+    role: str = Form("operator"),
+    site_id: Any = Form(None),
+):
+    if not logged_in(request):
+        return RedirectResponse("/login", status_code=302)
+    if not is_manager(request):
+        raise HTTPException(403, "manager only")
+    role_name = "manager" if str(role).strip().lower() == "manager" else "operator"
+    sites = form_id_list(site_id)
+    if role_name == "operator" and not sites:
+        return templates.TemplateResponse(
+            "users.html",
+            users_page_ctx(request, error="Choose at least one site for this user"),
+            status_code=400,
+        )
+    known = known_site_ids()
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(q("SELECT id FROM app_users WHERE id=?"), (user_id,))
+        if not cur.fetchone():
+            raise HTTPException(404, "user not found")
+        cur.execute(q("UPDATE app_users SET role=? WHERE id=?"), (role_name, user_id))
+        if role_name == "manager":
+            cur.execute(q("DELETE FROM user_sites WHERE user_id=?"), (user_id,))
+        else:
+            replace_user_sites(cur, user_id, sites, known)
+    return templates.TemplateResponse("users.html", users_page_ctx(request, notice="Access updated."))
+
+
+@app.post("/users/{user_id}/delete")
+def users_delete(request: Request, user_id: int):
+    if not logged_in(request):
+        return RedirectResponse("/login", status_code=302)
+    if not is_manager(request):
+        raise HTTPException(403, "manager only")
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(q("DELETE FROM user_sites WHERE user_id=?"), (user_id,))
+        cur.execute(q("DELETE FROM app_users WHERE id=?"), (user_id,))
+    return RedirectResponse("/users", status_code=303)
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -1118,16 +1448,22 @@ def login_page(request: Request):
 
 
 @app.post("/login")
-def login_submit(request: Request, password: str = Form(...)):
+def login_submit(request: Request, password: str = Form(...), email: str = Form("")):
+    mail = normalize_email(email)
     expected = os.environ.get("ADMIN_PASSWORD") or ""
-    if not expected or not secrets.compare_digest(password, expected):
-        return templates.TemplateResponse(
-            "login.html",
-            {"request": request, "error": "Invalid password"},
-            status_code=401,
-        )
-    request.session["admin"] = True
-    return RedirectResponse("/", status_code=302)
+    if (not mail or mail in {"admin", "administrator"}) and expected:
+        if secrets.compare_digest(password, expected):
+            start_admin_session(request)
+            return RedirectResponse("/", status_code=302)
+    user = find_user_by_email(mail) if mail else None
+    if user and verify_password(password, str(user.get("password_hash") or "")):
+        start_user_session(request, user)
+        return RedirectResponse("/", status_code=302)
+    return templates.TemplateResponse(
+        "login.html",
+        {"request": request, "error": "Invalid email or password"},
+        status_code=401,
+    )
 
 
 @app.post("/logout")
@@ -1170,7 +1506,7 @@ def set_setpoint(
     setpoint_c: float = Form(...),
     next: str = Form(""),
 ):
-    require_admin(request)
+    require_site_access(request, device_id)
     if setpoint_c < -50 or setpoint_c > 40:
         raise HTTPException(400, "setpoint out of range")
     raw = int(round(setpoint_c * 10))
@@ -1195,7 +1531,7 @@ def set_instrument_name(
     name: str = Form(...),
     next: str = Form(""),
 ):
-    require_admin(request)
+    require_site_access(request, device_id)
     label = " ".join(str(name or "").split())
     if not label or len(label) > NAME_MAX_LEN:
         raise HTTPException(400, "name must be 1 to 80 characters")
@@ -1226,7 +1562,7 @@ def set_power(
     power: int = Form(...),
     next: str = Form(""),
 ):
-    require_admin(request)
+    require_site_access(request, device_id)
     want_on = bool(int(power))
     raw = POWER_ON_MASK if want_on else POWER_OFF_MASK
     _queue_job(device_id, instrument_id, "power", POWER_REGISTER, raw, 1 if want_on else 0)
