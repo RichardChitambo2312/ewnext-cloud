@@ -21,6 +21,11 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
 SETPOINT_REGISTER = 32769  # EWNext SEt, 0.1 C
+POWER_REGISTER = 4123  # Ronon / RoFFoFF command word
+POWER_ON_MASK = 4  # Ronon Device on
+POWER_OFF_MASK = 8  # RoFFoFF Device off
+STANDBY_MASK = 1  # STD-BY in analog RAM 4115
+NAME_MAX_LEN = 80
 PENDING_SETPOINT_TTL_SEC = 10
 HISTORY_RANGES = {
     "1h": 3600,
@@ -149,6 +154,7 @@ def init_db() -> None:
         conn.commit()
         _ensure_column(cur, "instruments", "last_flags", "INTEGER")
         _ensure_column(cur, "instruments", "last_stale", "INTEGER DEFAULT 0")
+        _ensure_column(cur, "instruments", "label", "TEXT")
         _ensure_column(cur, "readings", "register_address", "INTEGER")
         _ensure_column(cur, "readings", "value", "TEXT")
         _ensure_column(cur, "readings", "raw_data", "TEXT")
@@ -273,7 +279,10 @@ def format_temp(value: Any) -> str:
     return f"{n:.1f}°C"
 
 
-def display_name(server_name: Any, instrument_id: int) -> str:
+def display_name(label: Any, server_name: Any, instrument_id: int) -> str:
+    custom = str(label or "").strip()
+    if custom:
+        return custom
     raw = str(server_name or "").strip()
     if not raw:
         return f"Instrument {instrument_id}"
@@ -326,17 +335,20 @@ def decode_flags(flags: Any) -> dict[str, bool]:
             "humidity": False,
             "alarm": False,
             "defrost_active": False,
+            "standby": False,
         }
     cooling = bool(bits & 0x0002)  # CP1
     defrost_active = bool(bits & 0x0010)  # DEF1
     fan = bool(bits & 0x0040)  # FAN
     alarm = bool(bits & 0x0100)  # ALM
+    standby = bool(bits & STANDBY_MASK)  # STD-BY
     return {
         "cooling": cooling,
         "defrost_active": defrost_active,
         "fan": fan,
         "alarm": alarm,
         "humidity": defrost_active,
+        "standby": standby,
     }
 
 
@@ -345,6 +357,23 @@ def same_setpoint(a: Any, b: Any) -> bool:
         return abs(float(a) - float(b)) < 0.051
     except (TypeError, ValueError):
         return False
+
+
+def queued_power(pending: dict | None, live_on: bool) -> bool | None:
+    if not pending:
+        return None
+    try:
+        want = bool(int(pending.get("display_value") or 0))
+    except (TypeError, ValueError):
+        return None
+    if want == bool(live_on):
+        return None
+    created = parse_ts(pending.get("created_at"))
+    if created is not None:
+        age = (datetime.now(timezone.utc) - created).total_seconds()
+        if age >= PENDING_SETPOINT_TTL_SEC:
+            return None
+    return want
 
 
 def queued_setpoint(pending: dict | None, live_setpoint: Any) -> float | None:
@@ -363,7 +392,9 @@ def queued_setpoint(pending: dict | None, live_setpoint: Any) -> float | None:
     return queued
 
 
-def decorate_instrument(row: dict, pending: dict | None) -> dict:
+def decorate_instrument(
+    row: dict, pending: dict | None = None, pending_power_job: dict | None = None
+) -> dict:
     inst = dict(row)
     online = instrument_online(inst)
     flags = decode_flags(inst.get("last_flags")) if inst.get("last_flags") is not None else None
@@ -381,17 +412,24 @@ def decorate_instrument(row: dict, pending: dict | None) -> dict:
             "humidity": False,
             "alarm": False,
             "defrost_active": False,
+            "standby": False,
         }
     pending_value = queued_setpoint(pending, setpoint)
+    live_on = not bool(flags.get("standby"))
+    pending_on = queued_power(pending_power_job, live_on)
     inst.update(
         {
-            "name": display_name(inst.get("server_name"), inst.get("instrument_id") or 0),
+            "name": display_name(inst.get("label"), inst.get("server_name"), inst.get("instrument_id") or 0),
             "online": online,
             "cooling": flags["cooling"],
             "fan": flags["fan"],
             "humidity": flags["humidity"],
             "defrost_active": flags["defrost_active"],
             "alarm": flags["alarm"],
+            "standby": flags["standby"],
+            "live_powered": live_on,
+            "powered": live_on if pending_on is None else pending_on,
+            "pending_power": pending_on,
             "cp1_label": "ON" if flags["cooling"] else "OFF",
             "def1_label": "ON" if flags["defrost_active"] else "OFF",
             "fan_label": "ON" if flags["fan"] else "OFF",
@@ -636,7 +674,10 @@ async def job_result(job_id: int, request: Request) -> dict:
     error = body.get("error")
     with db() as conn:
         cur = conn.cursor()
-        cur.execute(q("SELECT id, device_id, instrument_id, display_value, status FROM jobs WHERE id=?"), (job_id,))
+        cur.execute(
+            q("SELECT id, device_id, instrument_id, kind, display_value, status FROM jobs WHERE id=?"),
+            (job_id,),
+        )
         row = cur.fetchone()
         if not row:
             raise HTTPException(404, "job not found")
@@ -644,14 +685,15 @@ async def job_result(job_id: int, request: Request) -> dict:
             "id": row[0],
             "device_id": row[1],
             "instrument_id": row[2],
-            "display_value": row[3],
-            "status": row[4],
+            "kind": row[3],
+            "display_value": row[4],
+            "status": row[5],
         }
         cur.execute(
             q("UPDATE jobs SET status=?, error=?, completed_at=? WHERE id=?"),
             ("done" if ok else "error", None if ok else str(error or "failed"), now_iso(), job_id),
         )
-        if ok:
+        if ok and job.get("kind") == "setpoint":
             cur.execute(
                 q(
                     """
@@ -661,6 +703,20 @@ async def job_result(job_id: int, request: Request) -> dict:
                 ),
                 (job["display_value"], job["device_id"], job["instrument_id"]),
             )
+        elif ok and job.get("kind") == "power":
+            want_on = bool(int(job.get("display_value") or 0))
+            flag_sql = (
+                "COALESCE(last_flags, 0) & 65534" if want_on else "COALESCE(last_flags, 0) | 1"
+            )
+            cur.execute(
+                q(
+                    f"""
+                    UPDATE instruments SET last_flags={flag_sql}
+                    WHERE device_id=? AND instrument_id=?
+                    """
+                ),
+                (job["device_id"], job["instrument_id"]),
+            )
     return {"ok": True}
 
 
@@ -669,7 +725,7 @@ def dashboard_shell() -> dict:
         cur = conn.cursor()
         cur.execute(
             """
-            SELECT device_id, instrument_id, server_name, last_probe1, last_probe2,
+            SELECT device_id, instrument_id, server_name, label, last_probe1, last_probe2,
                    last_setpoint, last_flags, last_stale, last_seen
             FROM instruments
             ORDER BY instrument_id
@@ -680,17 +736,24 @@ def dashboard_shell() -> dict:
             """
             SELECT id, device_id, instrument_id, kind, display_value, status, created_at
             FROM jobs
-            WHERE status='pending' AND kind='setpoint'
+            WHERE status='pending' AND kind IN ('setpoint', 'power')
             ORDER BY id ASC
             """
         )
         pending_jobs = fetchall(cur)
-    pending_by_key = {
-        (j.get("device_id"), j.get("instrument_id")): j for j in pending_jobs
-    }
+    pending_setpoints = {}
+    pending_power = {}
+    for job in pending_jobs:
+        key = (job.get("device_id"), job.get("instrument_id"))
+        if job.get("kind") == "power":
+            pending_power[key] = job
+        else:
+            pending_setpoints[key] = job
     widgets = [
         decorate_instrument(
-            inst, pending_by_key.get((inst.get("device_id"), inst.get("instrument_id")))
+            inst,
+            pending_setpoints.get((inst.get("device_id"), inst.get("instrument_id"))),
+            pending_power.get((inst.get("device_id"), inst.get("instrument_id"))),
         )
         for inst in instruments
     ]
@@ -739,6 +802,9 @@ def instruments_api(request: Request):
             "instrument_id": w.get("instrument_id"),
             "last_setpoint": w.get("last_setpoint"),
             "pending_setpoint": w.get("pending_setpoint"),
+            "live_powered": w.get("live_powered"),
+            "powered": w.get("powered"),
+            "pending_power": w.get("pending_power"),
         }
         for w in ctx["instruments"]
     ]
@@ -866,17 +932,18 @@ def logout(request: Request):
     return RedirectResponse("/login", status_code=302)
 
 
-@app.post("/setpoint")
-def set_setpoint(
-    request: Request,
-    instrument_id: int = Form(...),
-    device_id: str = Form(...),
-    setpoint_c: float = Form(...),
-):
-    require_admin(request)
-    if setpoint_c < -50 or setpoint_c > 40:
-        raise HTTPException(400, "setpoint out of range")
-    raw = int(round(setpoint_c * 10))
+def _wants_json(request: Request) -> bool:
+    return "application/json" in (request.headers.get("accept") or "").lower()
+
+
+def _redirect_next(next_url: str) -> RedirectResponse:
+    nxt = (next_url or "/").strip()
+    if not nxt.startswith("/") or nxt.startswith("//"):
+        nxt = "/"
+    return RedirectResponse(nxt, status_code=303)
+
+
+def _queue_job(device_id: str, instrument_id: int, kind: str, register: int, raw: int, display_value: float) -> None:
     with db() as conn:
         cur = conn.cursor()
         cur.execute(
@@ -884,12 +951,27 @@ def set_setpoint(
                 """
                 INSERT INTO jobs (
                     device_id, instrument_id, kind, register, raw_value, display_value, status, created_at
-                ) VALUES (?, ?, 'setpoint', ?, ?, ?, 'pending', ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
                 """
             ),
-            (device_id, instrument_id, SETPOINT_REGISTER, raw, setpoint_c, now_iso()),
+            (device_id, instrument_id, kind, register, raw, display_value, now_iso()),
         )
-    if "application/json" in (request.headers.get("accept") or "").lower():
+
+
+@app.post("/setpoint")
+def set_setpoint(
+    request: Request,
+    instrument_id: int = Form(...),
+    device_id: str = Form(...),
+    setpoint_c: float = Form(...),
+    next: str = Form(""),
+):
+    require_admin(request)
+    if setpoint_c < -50 or setpoint_c > 40:
+        raise HTTPException(400, "setpoint out of range")
+    raw = int(round(setpoint_c * 10))
+    _queue_job(device_id, instrument_id, "setpoint", SETPOINT_REGISTER, raw, setpoint_c)
+    if _wants_json(request):
         return JSONResponse(
             {
                 "ok": True,
@@ -898,10 +980,62 @@ def set_setpoint(
                 "setpoint_c": setpoint_c,
             }
         )
-    nxt = (request.form.get("next") or "/").strip()
-    if not nxt.startswith("/") or nxt.startswith("//"):
-        nxt = "/"
-    return RedirectResponse(nxt, status_code=303)
+    return _redirect_next(next)
+
+
+@app.post("/instrument/name")
+def set_instrument_name(
+    request: Request,
+    instrument_id: int = Form(...),
+    device_id: str = Form(...),
+    name: str = Form(...),
+    next: str = Form(""),
+):
+    require_admin(request)
+    label = " ".join(str(name or "").split())
+    if not label or len(label) > NAME_MAX_LEN:
+        raise HTTPException(400, "name must be 1 to 80 characters")
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            q("SELECT device_id FROM instruments WHERE device_id=? AND instrument_id=?"),
+            (device_id, instrument_id),
+        )
+        if not cur.fetchone():
+            raise HTTPException(404, "instrument not found")
+        cur.execute(
+            q("UPDATE instruments SET label=? WHERE device_id=? AND instrument_id=?"),
+            (label, device_id, instrument_id),
+        )
+    if _wants_json(request):
+        return JSONResponse(
+            {"ok": True, "instrument_id": instrument_id, "name": label}
+        )
+    return _redirect_next(next)
+
+
+@app.post("/power")
+def set_power(
+    request: Request,
+    instrument_id: int = Form(...),
+    device_id: str = Form(...),
+    power: int = Form(...),
+    next: str = Form(""),
+):
+    require_admin(request)
+    want_on = bool(int(power))
+    raw = POWER_ON_MASK if want_on else POWER_OFF_MASK
+    _queue_job(device_id, instrument_id, "power", POWER_REGISTER, raw, 1 if want_on else 0)
+    if _wants_json(request):
+        return JSONResponse(
+            {
+                "ok": True,
+                "queued": True,
+                "instrument_id": instrument_id,
+                "power": want_on,
+            }
+        )
+    return _redirect_next(next)
 
 
 if __name__ == "__main__":

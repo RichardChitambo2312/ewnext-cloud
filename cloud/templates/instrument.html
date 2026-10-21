@@ -7,7 +7,13 @@
         <div class="page-head">
           <div>
             <p class="eyebrow"><a href="/">Instruments</a></p>
-            <h1>{{ inst.name }}</h1>
+            <form class="name-inline" method="post" action="/instrument/name">
+              <input type="hidden" name="device_id" value="{{ inst.device_id }}">
+              <input type="hidden" name="instrument_id" value="{{ inst.instrument_id }}">
+              <input type="hidden" name="next" value="{{ inst.href }}">
+              <label class="sr-only" for="nm-detail">Instrument name</label>
+              <input class="name-input name-input-lg" id="nm-detail" name="name" value="{{ inst.name }}" maxlength="80" required>
+            </form>
             <p class="page-sub">
               Address {{ inst.instrument_id }} · {{ inst.device_id }}
               <span class="online-flag">
@@ -16,6 +22,17 @@
               </span>
             </p>
           </div>
+          <form class="power-toggle" method="post" action="/power">
+            <input type="hidden" name="device_id" value="{{ inst.device_id }}">
+            <input type="hidden" name="instrument_id" value="{{ inst.instrument_id }}">
+            <input type="hidden" name="next" value="{{ inst.href }}">
+            <input type="hidden" name="power" value="{{ 1 if inst.powered else 0 }}">
+            <label class="switch{% if inst.pending_power is not none %} is-queued{% endif %}">
+              <input class="power-input" type="checkbox" {% if inst.powered %}checked{% endif %} aria-label="Controller power">
+              <span class="switch-ui"></span>
+              <span class="switch-label">{% if inst.powered %}On{% else %}Off{% endif %}</span>
+            </label>
+          </form>
         </div>
         {% include "status_strip.html" %}
 

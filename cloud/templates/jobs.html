@@ -5,7 +5,7 @@
           <div>
             <p class="eyebrow">History</p>
             <h1>Jobs</h1>
-            <p class="page-sub">Recent probe readings and queued setpoint writes.</p>
+            <p class="page-sub">Recent probe readings and queued controller writes.</p>
           </div>
         </div>
 
@@ -42,19 +42,26 @@
             </div>
           </article>
           <article class="panel">
-            <h2>Setpoint jobs</h2>
+            <h2>Write jobs</h2>
             <table>
-              <thead><tr><th>ID</th><th>Addr</th><th>Value</th><th>Status</th></tr></thead>
+              <thead><tr><th>ID</th><th>Addr</th><th>Kind</th><th>Value</th><th>Status</th></tr></thead>
               <tbody>
               {% for j in jobs %}
                 <tr>
                   <td>{{ j.id }}</td>
                   <td>{{ j.instrument_id }}</td>
-                  <td>{{ '%.1f'|format(j.display_value) }} °C</td>
+                  <td>{{ j.kind }}</td>
+                  <td>
+                    {% if j.kind == "power" %}
+                      {{ "On" if j.display_value else "Off" }}
+                    {% else %}
+                      {{ '%.1f'|format(j.display_value) }} °C
+                    {% endif %}
+                  </td>
                   <td><span class="status {{ j.status }}">{{ j.status }}</span></td>
                 </tr>
               {% else %}
-                <tr><td colspan="4">No jobs yet</td></tr>
+                <tr><td colspan="5">No jobs yet</td></tr>
               {% endfor %}
               </tbody>
             </table>

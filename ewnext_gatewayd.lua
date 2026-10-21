@@ -1,6 +1,7 @@
 #!/usr/bin/lua
 -- EWNext gateway worker. Reads UCI ewnext_gateway + /tmp/modbus_db.
--- Publishes telemetry to the cloud and applies queued setpoint writes (FC16 @ 32769).
+-- Publishes telemetry to the cloud and applies queued writes:
+--   setpoint FC16 @ 32769, power FC16 @ 4123 (Ronon=4 / RoFFoFF=8).
 
 local sqlite = require("lsqlite3")
 local json = require("luci.jsonc")
@@ -13,6 +14,7 @@ local HDR_PATH = "/tmp/ewnext_gateway.hdr"
 local RESP_PATH = "/tmp/ewnext_gateway.resp"
 local DB_PATH = "/tmp/modbus_db"
 local SETPOINT_REGISTER = 32769
+local POWER_REGISTER = 4123
 
 local function log(msg)
     os.execute(string.format("logger -t ewnext_gateway %q", tostring(msg)))
@@ -180,21 +182,26 @@ local function xfer(f, req, ns)
     return f:read(128) or ""
 end
 
-local function write_setpoint(cfg, slave, raw_value)
+local function write_holding(cfg, slave, register, raw_value, verify)
     slave = tonumber(slave)
+    register = tonumber(register)
     if not slave then return false, "bad_slave" end
+    if not register then return false, "bad_register" end
     local f = open_bus(cfg)
     if not f then return false, "serial_open_failed" end
-    local wr = frame(string.char(slave, 16) .. u16(SETPOINT_REGISTER) .. u16(1) .. string.char(2) .. u16(raw_value))
+    local wr = frame(string.char(slave, 16) .. u16(register) .. u16(1) .. string.char(2) .. u16(raw_value))
     local ack = xfer(f, wr, 300000000)
-    nixio.nanosleep(0, 400000000)
-    local rd = frame(string.char(slave, 3) .. u16(SETPOINT_REGISTER) .. u16(1))
-    local resp = xfer(f, rd, 200000000)
+    local resp = ""
+    if verify then
+        nixio.nanosleep(0, 400000000)
+        local rd = frame(string.char(slave, 3) .. u16(register) .. u16(1))
+        resp = xfer(f, rd, 200000000)
+    end
     f:close()
     if #ack < 8 or ack:byte(1) ~= slave or ack:byte(2) ~= 16 then
         return false, "write_nack"
     end
-    if #resp >= 7 and resp:byte(1) == slave and resp:byte(2) == 3 then
+    if verify and #resp >= 7 and resp:byte(1) == slave and resp:byte(2) == 3 then
         local got = resp:byte(4) * 256 + resp:byte(5)
         local want = math.floor(tonumber(raw_value) or 0)
         if want < 0 then want = want + 65536 end
@@ -224,7 +231,7 @@ local function collect_jobs(resp, into, seen)
         if type(job) == "table" then
             local id = tonumber(job.id)
             local kind = tostring(job.type or job.kind or ""):lower()
-            if id and not seen[id] and kind == "setpoint" then
+            if id and not seen[id] and (kind == "setpoint" or kind == "power") then
                 seen[id] = true
                 into[#into + 1] = job
             end
@@ -232,7 +239,7 @@ local function collect_jobs(resp, into, seen)
     end
 end
 
-local function apply_setpoints(cfg, jobs)
+local function apply_jobs(cfg, jobs)
     if #jobs == 0 then return 0, 0 end
     os.execute("/etc/init.d/modbus_client stop >/dev/null 2>&1")
     nixio.nanosleep(1, 0)
@@ -240,14 +247,23 @@ local function apply_setpoints(cfg, jobs)
     for _, job in ipairs(jobs) do
         local slave = tonumber(job.instrument_id)
         local raw = tonumber(job.value or job.raw_value)
-        local ok, err = write_setpoint(cfg, slave, raw)
+        local kind = tostring(job.type or job.kind or ""):lower()
+        local register = tonumber(job.register)
+        local verify = true
+        if kind == "power" then
+            register = register or POWER_REGISTER
+            verify = false
+        else
+            register = register or SETPOINT_REGISTER
+        end
+        local ok, err = write_holding(cfg, slave, register, raw, verify)
         report_job(cfg, job.id, ok, err)
         if ok then
             ok_n = ok_n + 1
-            log(string.format("setpoint uid=%s raw=%s ok", tostring(slave), tostring(raw)))
+            log(string.format("%s uid=%s reg=%s raw=%s ok", kind, tostring(slave), tostring(register), tostring(raw)))
         else
             err_n = err_n + 1
-            log(string.format("setpoint uid=%s raw=%s failed %s", tostring(slave), tostring(raw), tostring(err)))
+            log(string.format("%s uid=%s reg=%s raw=%s failed %s", kind, tostring(slave), tostring(register), tostring(raw), tostring(err)))
         end
     end
     os.execute("/etc/init.d/modbus_client start >/dev/null 2>&1")
@@ -299,8 +315,8 @@ while true do
     if cfg.cloud_enabled then
         ok, err, jobs = publish(cfg, readings)
         if ok and jobs and #jobs > 0 then
-            local ok_n, err_n = apply_setpoints(cfg, jobs)
-            err = string.format("setpoint_ok=%d err=%d", ok_n, err_n)
+            local ok_n, err_n = apply_jobs(cfg, jobs)
+            err = string.format("jobs_ok=%d err=%d", ok_n, err_n)
         end
     else
         err = "cloud_disabled"

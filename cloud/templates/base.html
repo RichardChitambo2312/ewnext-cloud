@@ -54,6 +54,109 @@
     </div>
   </div>
   <script>
+    document.querySelectorAll(".name-inline").forEach(function (form) {
+      var input = form.querySelector(".name-input");
+      if (!input) return;
+      var last = input.value;
+      function saveName() {
+        var next = (input.value || "").trim();
+        if (!next || next === last) {
+          input.value = last;
+          return;
+        }
+        last = next;
+        input.value = next;
+        fetch("/instrument/name", {
+          method: "POST",
+          body: new FormData(form),
+          headers: { Accept: "application/json" },
+          credentials: "same-origin"
+        }).then(function (res) {
+          if (!res.ok) throw new Error("rename failed");
+          return res.json();
+        }).then(function (body) {
+          if (body && body.name) {
+            last = body.name;
+            input.value = body.name;
+          }
+        }).catch(function () {
+          last = "";
+        });
+      }
+      input.addEventListener("keydown", function (event) {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          input.blur();
+          saveName();
+        }
+      });
+      input.addEventListener("blur", saveName);
+    });
+    document.querySelectorAll(".power-toggle").forEach(function (form) {
+      var input = form.querySelector(".power-input");
+      var hidden = form.querySelector("[name=power]");
+      var wrap = form.querySelector(".switch");
+      var label = form.querySelector(".switch-label");
+      if (!input || !hidden) return;
+      function setSwitch(on, queued) {
+        input.checked = !!on;
+        hidden.value = on ? "1" : "0";
+        if (label) label.textContent = on ? "On" : "Off";
+        if (wrap) wrap.classList.toggle("is-queued", !!queued);
+      }
+      function pullPower(wantOn) {
+        var deviceId = form.querySelector("[name=device_id]").value;
+        var instrumentId = form.querySelector("[name=instrument_id]").value;
+        return fetch("/api/instruments", {
+          credentials: "same-origin",
+          headers: { Accept: "application/json" }
+        }).then(function (res) {
+          if (!res.ok) throw new Error("status failed");
+          return res.json();
+        }).then(function (rows) {
+          var row = (rows || []).find(function (item) {
+            return String(item.device_id) === String(deviceId)
+              && String(item.instrument_id) === String(instrumentId);
+          });
+          if (!row) return null;
+          if (row.live_powered === wantOn) {
+            setSwitch(row.live_powered, false);
+            return "confirmed";
+          }
+          return row.live_powered;
+        });
+      }
+      input.addEventListener("change", function () {
+        var wantOn = input.checked;
+        setSwitch(wantOn, true);
+        fetch("/power", {
+          method: "POST",
+          body: new FormData(form),
+          headers: { Accept: "application/json" },
+          credentials: "same-origin"
+        }).then(function (res) {
+          if (!res.ok) throw new Error("queue failed");
+          var started = Date.now();
+          var timer = setInterval(function () {
+            pullPower(wantOn).then(function (result) {
+              var timedOut = Date.now() - started >= 10000;
+              if (result === "confirmed") {
+                clearInterval(timer);
+                return;
+              }
+              if (timedOut) {
+                clearInterval(timer);
+                if (result != null) setSwitch(result, false);
+              }
+            }).catch(function () {
+              if (Date.now() - started >= 10000) clearInterval(timer);
+            });
+          }, 2000);
+        }).catch(function () {
+          setSwitch(!wantOn, false);
+        });
+      });
+    });
     document.querySelectorAll(".setpoint-inline").forEach(function (form) {
       var input = form.querySelector(".setpoint-input");
       var pill = form.querySelector(".setpoint-pill");

@@ -5,7 +5,7 @@
           <div>
             <p class="eyebrow">Live controllers</p>
             <h1>Instruments</h1>
-            <p class="page-sub">Each controller is shown as its own widget. Edit setpoint, then press Enter to confirm.</p>
+            <p class="page-sub">Rename with Enter. Toggle power to switch the controller on or off. Edit setpoint, then press Enter to confirm.</p>
           </div>
         </div>
 
@@ -21,14 +21,38 @@
           <article class="instrument-card{% if inst.alarm %} status-alarm{% endif %}">
             <a class="instrument-card-hit" href="{{ inst.href }}" aria-label="Open {{ inst.name }}"></a>
             <header class="instrument-card-head">
-              <div>
-                <h3>{{ inst.name }}</h3>
+              <div class="instrument-card-id">
+                <form class="name-inline" method="post" action="/instrument/name">
+                  <input type="hidden" name="device_id" value="{{ inst.device_id }}">
+                  <input type="hidden" name="instrument_id" value="{{ inst.instrument_id }}">
+                  <label class="sr-only" for="nm-{{ inst.device_id }}-{{ inst.instrument_id }}">Instrument name</label>
+                  <input
+                    class="name-input"
+                    id="nm-{{ inst.device_id }}-{{ inst.instrument_id }}"
+                    name="name"
+                    value="{{ inst.name }}"
+                    maxlength="80"
+                    required
+                  >
+                </form>
                 <p>Address: {{ inst.instrument_id }}</p>
               </div>
-              <span class="online-flag">
-                <span class="dot {% if inst.online %}dot-online{% else %}dot-offline{% endif %}"></span>
-                {{ "Online" if inst.online else "Offline" }}
-              </span>
+              <div class="instrument-card-tools">
+                <form class="power-toggle" method="post" action="/power">
+                  <input type="hidden" name="device_id" value="{{ inst.device_id }}">
+                  <input type="hidden" name="instrument_id" value="{{ inst.instrument_id }}">
+                  <input type="hidden" name="power" value="{{ 1 if inst.powered else 0 }}">
+                  <label class="switch{% if inst.pending_power is not none %} is-queued{% endif %}">
+                    <input class="power-input" type="checkbox" {% if inst.powered %}checked{% endif %} aria-label="Controller power">
+                    <span class="switch-ui"></span>
+                    <span class="switch-label">{% if inst.powered %}On{% else %}Off{% endif %}</span>
+                  </label>
+                </form>
+                <span class="online-flag">
+                  <span class="dot {% if inst.online %}dot-online{% else %}dot-offline{% endif %}"></span>
+                  {{ "Online" if inst.online else "Offline" }}
+                </span>
+              </div>
             </header>
 
             {% include "status_strip.html" %}
