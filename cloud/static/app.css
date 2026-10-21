@@ -8,13 +8,13 @@
   --line-strong: #cfd5de;
   --muted: #7a8494;
 
-  --nav: #0b6e99;
-  --nav-deep: #085578;
-  --nav-hover: #0a7faf;
+  --nav: #2980b9;
+  --nav-deep: #1e6491;
+  --nav-hover: #3390c9;
   --nav-active: rgba(255, 255, 255, 0.16);
 
-  --brand-blue: #00a3e0;
-  --brand-blue-soft: #e6f6fc;
+  --brand-blue: #2980b9;
+  --brand-blue-soft: #e3f0f7;
   --brand-orange: #f5a623;
   --ok: #22c55e;
   --ok-soft: #e8f9ee;
@@ -24,13 +24,13 @@
   --alarm-soft: #fdecec;
   --offline: #94a3b8;
   --icon-off: #9aa3af;
-  --cool-on: #2563eb;
-  --cool-soft: #dbeafe;
+  --cool-on: #2980b9;
+  --cool-soft: #e3f0f7;
   --fan-on: #22c55e;
   --defrost: #f97316;
   --defrost-soft: #ffedd5;
-  --temp: #0284c7;
-  --temp-soft: #e0f2fe;
+  --temp: #2980b9;
+  --temp-soft: #e3f0f7;
   --setpoint-bg: #f1f5f9;
   --setpoint-fg: #334155;
 
@@ -38,7 +38,7 @@
   --radius: 14px;
   --radius-sm: 10px;
   --shadow: 0 1px 2px rgba(26, 29, 33, 0.04), 0 8px 24px rgba(26, 29, 33, 0.06);
-  --shadow-hover: 0 2px 4px rgba(26, 29, 33, 0.06), 0 14px 32px rgba(11, 110, 153, 0.12);
+  --shadow-hover: 0 2px 4px rgba(26, 29, 33, 0.06), 0 14px 32px rgba(41, 128, 185, 0.16);
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
@@ -106,8 +106,15 @@ button {
   flex-direction: column;
   align-items: flex-start;
   gap: 10px;
-  padding: 22px 18px 18px;
+  padding: 22px 16px 18px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.brand-logo {
+  display: block;
+  width: 100%;
+  max-width: 196px;
+  height: auto;
 }
 
 .brand-word {
@@ -456,7 +463,7 @@ button {
 .pill-temp {
   color: var(--temp);
   background: var(--temp-soft);
-  border-color: rgba(2, 132, 199, 0.25);
+  border-color: rgba(41, 128, 185, 0.28);
 }
 
 .pill-defrost {
@@ -474,7 +481,7 @@ button {
 .pill-on-cool {
   color: var(--cool-on);
   background: var(--cool-soft);
-  border-color: rgba(37, 99, 235, 0.28);
+  border-color: rgba(41, 128, 185, 0.28);
   font-weight: 700;
   letter-spacing: 0.04em;
 }
@@ -696,7 +703,9 @@ th {
   min-height: 100vh;
   display: grid;
   place-items: center;
-  background: var(--canvas);
+  background:
+    radial-gradient(1200px 520px at 50% -12%, rgba(41, 128, 185, 0.28), transparent 58%),
+    var(--canvas);
 }
 
 .login-card {
@@ -705,6 +714,13 @@ th {
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   padding: 28px;
+}
+
+.login-logo {
+  display: block;
+  width: min(280px, 100%);
+  height: auto;
+  margin: 0 0 16px;
 }
 
 .login-card h1 {

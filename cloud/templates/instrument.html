@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ inst.name }} — EWNext Cloud{% endblock %}
+{% block title %}{{ inst.name }} — Keyview Cloud{% endblock %}
 {% block extra_head %}
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 {% endblock %}
@@ -74,10 +74,10 @@
             var empty = document.querySelector(".chart-empty");
             var chart = null;
             var colors = {
-              temp: "#0284c7",
+              temp: "#2980b9",
               defrost: "#f97316",
               setpoint: "#334155",
-              cooling: "#2563eb",
+              cooling: "#2980b9",
               defrostOn: "#ea580c",
               fan: "#22c55e",
               alarm: "#ef4444"

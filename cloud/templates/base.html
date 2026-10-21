@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}EWNext Cloud{% endblock %}</title>
+  <title>{% block title %}Keyview Cloud{% endblock %}</title>
   <link rel="stylesheet" href="/static/app.css">
   {% block extra_head %}{% endblock %}
 </head>
@@ -11,7 +11,9 @@
   <div class="shell">
     <aside class="sidebar">
       <div class="sidebar-brand">
-        <strong class="brand-word">EWNext</strong>
+        <a href="/" aria-label="Keyview">
+          <img class="brand-logo" src="/static/brand/keyview-logo-white.png" alt="Keyview Intelligent Monitoring">
+        </a>
         <span class="sidebar-mini">Cloud</span>
       </div>
       <nav class="sidebar-nav" aria-label="App">
@@ -27,7 +29,7 @@
       <div class="sidebar-foot">
         <div class="side-user">
           <strong>Admin</strong>
-          <span>EWNext Gateway</span>
+          <span>Keyview</span>
         </div>
         <form method="post" action="/logout">
           <button class="side-logout" type="submit">Sign out</button>

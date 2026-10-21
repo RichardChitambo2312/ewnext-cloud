@@ -33,7 +33,7 @@ HISTORY_MAX_POINTS = 720
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
 
-app = FastAPI(title="EWNext Cloud")
+app = FastAPI(title="Keyview Cloud")
 app.add_middleware(
     SessionMiddleware,
     secret_key=os.environ.get("SESSION_SECRET") or secrets.token_hex(32),
