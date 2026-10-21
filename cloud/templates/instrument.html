@@ -96,11 +96,82 @@
               });
             }
 
-            function statusBars(points, key, lane) {
-              return points.map(function (p) {
-                return Number(p[key]) ? [lane, lane + 0.8] : null;
-              });
+            function runs(points, key) {
+              var out = [];
+              var start = null;
+              for (var i = 0; i < points.length; i++) {
+                var on = Number(points[i][key]);
+                if (on && start === null) start = i;
+                if (!on && start !== null) {
+                  out.push([start, i - 1]);
+                  start = null;
+                }
+              }
+              if (start !== null) out.push([start, points.length - 1]);
+              return out;
             }
+
+            function roundRect(ctx, x, y, w, h, r) {
+              var radius = Math.min(r, h / 2, w / 2);
+              ctx.beginPath();
+              ctx.moveTo(x + radius, y);
+              ctx.arcTo(x + w, y, x + w, y + h, radius);
+              ctx.arcTo(x + w, y + h, x, y + h, radius);
+              ctx.arcTo(x, y + h, x, y, radius);
+              ctx.arcTo(x, y, x + w, y, radius);
+              ctx.closePath();
+            }
+
+            var statusLanes = [
+              { key: "cooling", label: "CP1", color: colors.cooling },
+              { key: "defrost_on", label: "DEF1", color: colors.defrostOn },
+              { key: "fan", label: "FAN", color: colors.fan },
+              { key: "alarm", label: "Alarm", color: colors.alarm }
+            ];
+
+            var statusRibbon = {
+              id: "statusRibbon",
+              afterDatasetsDraw: function (chart) {
+                var pts = chart.$statusPoints || [];
+                var area = chart.chartArea;
+                var xScale = chart.scales.x;
+                if (!pts.length || !area || !xScale) return;
+                var ctx = chart.ctx;
+                var laneH = 7;
+                var gap = 5;
+                var top = area.bottom + 10;
+                ctx.save();
+                statusLanes.forEach(function (lane, li) {
+                  var y = top + li * (laneH + gap);
+                  ctx.fillStyle = "rgba(226,230,236,0.9)";
+                  roundRect(ctx, area.left, y, area.right - area.left, laneH, 4);
+                  ctx.fill();
+                  runs(pts, lane.key).forEach(function (span) {
+                    var x0 = xScale.getPixelForValue(span[0]);
+                    var x1 = xScale.getPixelForValue(span[1]);
+                    var left = Math.min(x0, x1) - 2;
+                    var width = Math.max(4, Math.abs(x1 - x0) + 4);
+                    ctx.fillStyle = lane.color;
+                    roundRect(ctx, left, y, width, laneH, 4);
+                    ctx.fill();
+                  });
+                  ctx.fillStyle = "#7a8494";
+                  ctx.font = "600 10px Helvetica Neue, Helvetica, Arial, sans-serif";
+                  ctx.textBaseline = "middle";
+                  ctx.textAlign = "left";
+                  ctx.fillText(lane.label, area.right + 8, y + laneH / 2);
+                });
+                ctx.restore();
+                runs(pts, "alarm").forEach(function (span) {
+                  var x0 = xScale.getPixelForValue(span[0]);
+                  var x1 = xScale.getPixelForValue(span[1]);
+                  ctx.save();
+                  ctx.fillStyle = "rgba(239,68,68,0.08)";
+                  ctx.fillRect(Math.min(x0, x1) - 2, area.top, Math.max(4, Math.abs(x1 - x0) + 4), area.bottom - area.top);
+                  ctx.restore();
+                });
+              }
+            };
 
             function render(points) {
               var hasData = points && points.length;
@@ -111,37 +182,38 @@
                 return;
               }
               var labels = points.map(function (p) { return fmtTick(p.t); });
-              var barOpts = {
-                type: "bar",
-                yAxisID: "y1",
-                borderWidth: 0,
-                grouped: false,
-                categoryPercentage: 1,
-                barPercentage: 1,
-                skipNull: true
-              };
               var data = {
                 labels: labels,
                 datasets: [
-                  { label: "Temperature", data: series(points, "temp"), borderColor: colors.temp, backgroundColor: "transparent", yAxisID: "y", tension: 0.2, pointRadius: 0, borderWidth: 2 },
-                  { label: "Defrost temp", data: series(points, "defrost"), borderColor: colors.defrost, backgroundColor: "transparent", yAxisID: "y", tension: 0.2, pointRadius: 0, borderWidth: 2 },
-                  { label: "Setpoint", data: series(points, "setpoint"), borderColor: colors.setpoint, backgroundColor: "transparent", yAxisID: "y", tension: 0, pointRadius: 0, borderWidth: 2, borderDash: [5, 4] },
-                  Object.assign({ label: "CP1 cooling", data: statusBars(points, "cooling", 3.1), backgroundColor: "rgba(37,99,235,0.85)" }, barOpts),
-                  Object.assign({ label: "DEF1 defrost", data: statusBars(points, "defrost_on", 2.1), backgroundColor: "rgba(234,88,12,0.85)" }, barOpts),
-                  Object.assign({ label: "FAN", data: statusBars(points, "fan", 1.1), backgroundColor: "rgba(34,197,94,0.85)" }, barOpts),
-                  Object.assign({ label: "Alarm", data: statusBars(points, "alarm", 0.1), backgroundColor: "rgba(239,68,68,0.85)" }, barOpts)
+                  { label: "Temperature", data: series(points, "temp"), borderColor: colors.temp, backgroundColor: "transparent", tension: 0.2, pointRadius: 0, borderWidth: 2 },
+                  { label: "Defrost temp", data: series(points, "defrost"), borderColor: colors.defrost, backgroundColor: "transparent", tension: 0.2, pointRadius: 0, borderWidth: 2 },
+                  { label: "Setpoint", data: series(points, "setpoint"), borderColor: colors.setpoint, backgroundColor: "transparent", tension: 0, pointRadius: 0, borderWidth: 2, borderDash: [5, 4] }
                 ]
               };
               var options = {
                 responsive: true,
                 maintainAspectRatio: false,
                 interaction: { mode: "index", intersect: false },
+                layout: { padding: { bottom: 58, right: 44 } },
                 plugins: {
-                  legend: { position: "bottom", labels: { boxWidth: 12, usePointStyle: true } }
+                  legend: { position: "top", labels: { boxWidth: 12, usePointStyle: true } },
+                  tooltip: {
+                    callbacks: {
+                      afterBody: function (items) {
+                        if (!items.length) return [];
+                        var p = points[items[0].dataIndex] || {};
+                        return [
+                          "CP1 " + (p.cooling ? "On" : "Off"),
+                          "DEF1 " + (p.defrost_on ? "On" : "Off"),
+                          "FAN " + (p.fan ? "On" : "Off"),
+                          "Alarm " + (p.alarm ? "On" : "Off")
+                        ];
+                      }
+                    }
+                  }
                 },
                 scales: {
                   x: {
-                    stacked: false,
                     ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 8, color: "#7a8494" },
                     grid: { color: "rgba(226,230,236,0.8)" }
                   },
@@ -149,26 +221,6 @@
                     title: { display: true, text: "°C" },
                     ticks: { color: "#7a8494" },
                     grid: { color: "rgba(226,230,236,0.8)" }
-                  },
-                  y1: {
-                    position: "right",
-                    min: 0,
-                    max: 4,
-                    offset: false,
-                    title: { display: true, text: "Status" },
-                    ticks: {
-                      color: "#7a8494",
-                      stepSize: 0.5,
-                      autoSkip: false,
-                      callback: function (v) {
-                        if (v === 0.5) return "Alarm";
-                        if (v === 1.5) return "FAN";
-                        if (v === 2.5) return "DEF1";
-                        if (v === 3.5) return "CP1";
-                        return "";
-                      }
-                    },
-                    grid: { drawOnChartArea: false }
                   }
                 }
               };
@@ -176,7 +228,9 @@
                 chart.destroy();
                 chart = null;
               }
-              chart = new Chart(canvas, { type: "line", data: data, options: options });
+              chart = new Chart(canvas, { type: "line", data: data, options: options, plugins: [statusRibbon] });
+              chart.$statusPoints = points;
+              chart.update("none");
             }
 
             function loadRange(rangeKey) {
