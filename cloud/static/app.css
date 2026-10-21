@@ -586,6 +586,29 @@ button {
   gap: 14px;
 }
 
+.jobs-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.table-wrap table {
+  min-width: 920px;
+}
+
+code.raw {
+  display: inline-block;
+  max-width: 420px;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: var(--ink-soft);
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;

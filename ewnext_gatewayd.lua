@@ -181,6 +181,8 @@ local function publish(cfg, readings)
             stale = r.stale,
             server_name = r.server_name,
             request_name = r.request_name,
+            start_address = r.start_address,
+            register_address = r.start_address,
             writes_enabled = false
         }
         local code, resp = http_post(url, cfg.api_key, json.stringify(payload) or "{}")

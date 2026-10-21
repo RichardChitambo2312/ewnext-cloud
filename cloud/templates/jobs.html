@@ -9,24 +9,37 @@
           </div>
         </div>
 
-        <section class="split" aria-label="Readings and jobs">
+        <section class="jobs-stack" aria-label="Readings and jobs">
           <article class="panel">
             <h2>Recent readings</h2>
-            <table>
-              <thead><tr><th>When</th><th>Addr</th><th>P1</th><th>P2</th></tr></thead>
-              <tbody>
-              {% for r in readings %}
-                <tr>
-                  <td class="small">{{ r.received_at }}</td>
-                  <td>{{ r.instrument_id }}</td>
-                  <td>{% if r.probe1 is not none %}{{ '%.1f'|format(r.probe1) }}{% else %}—{% endif %}</td>
-                  <td>{% if r.probe2 is not none %}{{ '%.1f'|format(r.probe2) }}{% else %}—{% endif %}</td>
-                </tr>
-              {% else %}
-                <tr><td colspan="4">No rows yet</td></tr>
-              {% endfor %}
-              </tbody>
-            </table>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>id</th>
+                    <th>instrument_id</th>
+                    <th>register_address</th>
+                    <th>value</th>
+                    <th>raw_data</th>
+                    <th>created_at</th>
+                  </tr>
+                </thead>
+                <tbody>
+                {% for r in readings %}
+                  <tr>
+                    <td>{{ r.id }}</td>
+                    <td>{{ r.instrument_id }}</td>
+                    <td>{% if r.register_address is not none %}{{ r.register_address }}{% else %}—{% endif %}</td>
+                    <td><code class="raw">{{ r.value or "—" }}</code></td>
+                    <td><code class="raw">{{ r.raw_data or "—" }}</code></td>
+                    <td class="small">{{ r.created_at }}</td>
+                  </tr>
+                {% else %}
+                  <tr><td colspan="6">No rows yet</td></tr>
+                {% endfor %}
+                </tbody>
+              </table>
+            </div>
           </article>
           <article class="panel">
             <h2>Setpoint jobs</h2>

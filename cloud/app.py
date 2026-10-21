@@ -87,13 +87,17 @@ def init_db() -> None:
                 device_id TEXT NOT NULL,
                 instrument_id INTEGER NOT NULL,
                 server_name TEXT,
+                register_address INTEGER,
+                value TEXT,
+                raw_data TEXT,
                 values_json TEXT NOT NULL,
                 probe1 REAL,
                 probe2 REAL,
                 flags INTEGER,
                 stale INTEGER NOT NULL DEFAULT 0,
                 device_ts INTEGER,
-                received_at {ts} NOT NULL
+                received_at {ts} NOT NULL,
+                created_at {ts}
             )
             """
         )
@@ -133,6 +137,10 @@ def init_db() -> None:
         conn.commit()
         _ensure_column(cur, "instruments", "last_flags", "INTEGER")
         _ensure_column(cur, "instruments", "last_stale", "INTEGER DEFAULT 0")
+        _ensure_column(cur, "readings", "register_address", "INTEGER")
+        _ensure_column(cur, "readings", "value", "TEXT")
+        _ensure_column(cur, "readings", "raw_data", "TEXT")
+        _ensure_column(cur, "readings", "created_at", ts)
         conn.commit()
 
 
@@ -182,6 +190,33 @@ def logged_in(request: Request) -> bool:
 def require_admin(request: Request) -> None:
     if not logged_in(request):
         raise HTTPException(401, "login required")
+
+
+def as_int(value: Any) -> int | None:
+    try:
+        if value is None or value is False:
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def reading_register_address(body: dict) -> int | None:
+    for key in ("register_address", "start_address", "address", "first_reg"):
+        n = as_int(body.get(key))
+        if n is not None:
+            return n
+    return None
+
+
+def reading_value(body: dict, values: Any) -> str:
+    if body.get("value") is not None and not isinstance(body.get("value"), (dict, list)):
+        return str(body.get("value"))
+    if isinstance(values, (list, dict)):
+        return json.dumps(values, separators=(",", ":"))
+    if values is None:
+        return ""
+    return str(values)
 
 
 def decode_values(values: Any) -> tuple[float | None, float | None, int | None, float | None]:
@@ -371,6 +406,9 @@ async def ingest(request: Request) -> JSONResponse:
     probe1, probe2, flags, live_setpoint = decode_values(values)
     received = now_iso()
     values_store = json.dumps(values)
+    raw_data = json.dumps(body, default=str)
+    register_address = reading_register_address(body)
+    value_store = reading_value(body, values)
 
     with db() as conn:
         cur = conn.cursor()
@@ -378,21 +416,25 @@ async def ingest(request: Request) -> JSONResponse:
             q(
                 """
                 INSERT INTO readings (
-                    device_id, instrument_id, server_name, values_json,
-                    probe1, probe2, flags, stale, device_ts, received_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    device_id, instrument_id, server_name, register_address, value, raw_data,
+                    values_json, probe1, probe2, flags, stale, device_ts, received_at, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """
             ),
             (
                 device_id,
                 instrument_id,
                 body.get("server_name"),
+                register_address,
+                value_store,
+                raw_data,
                 values_store,
                 probe1,
                 probe2,
                 flags,
                 1 if body.get("stale") else 0,
                 body.get("timestamp"),
+                received,
                 received,
             ),
         )
@@ -611,7 +653,15 @@ def jobs_page(request: Request):
         )
         jobs = fetchall(cur)
         cur.execute(
-            "SELECT device_id, instrument_id, probe1, probe2, received_at FROM readings ORDER BY id DESC LIMIT 40"
+            """
+            SELECT id, instrument_id, register_address,
+                   COALESCE(value, values_json) AS value,
+                   COALESCE(raw_data, values_json) AS raw_data,
+                   COALESCE(created_at, received_at) AS created_at
+            FROM readings
+            ORDER BY id DESC
+            LIMIT 40
+            """
         )
         readings = fetchall(cur)
     ctx.update(
