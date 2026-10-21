@@ -53,6 +53,7 @@
   <script>
     document.querySelectorAll(".setpoint-inline").forEach(function (form) {
       var input = form.querySelector(".setpoint-input");
+      var pill = form.querySelector(".setpoint-pill");
       if (!input) return;
       var last = input.value;
       form.addEventListener("submit", function (event) {
@@ -60,13 +61,43 @@
           event.preventDefault();
         }
       });
+      function applyLiveSetpoint(live) {
+        if (live === null || live === undefined || live === "") return;
+        input.value = live;
+        last = String(live);
+        if (pill) pill.classList.remove("is-queued");
+      }
+      function closeEnough(a, b) {
+        return Math.abs(Number(a) - Number(b)) < 0.051;
+      }
+      function pullControllerSetpoint(queued) {
+        var deviceId = form.querySelector("[name=device_id]").value;
+        var instrumentId = form.querySelector("[name=instrument_id]").value;
+        return fetch("/api/instruments", {
+          credentials: "same-origin",
+          headers: { Accept: "application/json" }
+        }).then(function (res) {
+          if (!res.ok) throw new Error("status failed");
+          return res.json();
+        }).then(function (rows) {
+          var row = (rows || []).find(function (item) {
+            return String(item.device_id) === String(deviceId)
+              && String(item.instrument_id) === String(instrumentId);
+          });
+          if (!row) return null;
+          if (row.last_setpoint != null && closeEnough(row.last_setpoint, queued)) {
+            applyLiveSetpoint(row.last_setpoint);
+            return "confirmed";
+          }
+          return row.last_setpoint;
+        });
+      }
       input.addEventListener("keydown", function (event) {
         if (event.key !== "Enter") return;
         event.preventDefault();
         if (!input.checkValidity() || input.value === "" || input.value === last) return;
         var next = input.value;
         last = next;
-        var pill = form.querySelector(".setpoint-pill");
         if (pill) pill.classList.add("is-queued");
         fetch("/setpoint", {
           method: "POST",
@@ -75,6 +106,26 @@
           credentials: "same-origin"
         }).then(function (res) {
           if (!res.ok) throw new Error("queue failed");
+          var started = Date.now();
+          var timer = setInterval(function () {
+            if (document.activeElement === input && input.value !== String(next)) {
+              clearInterval(timer);
+              return;
+            }
+            pullControllerSetpoint(next).then(function (result) {
+              var timedOut = Date.now() - started >= 10000;
+              if (result === "confirmed") {
+                clearInterval(timer);
+                return;
+              }
+              if (timedOut) {
+                clearInterval(timer);
+                if (result != null) applyLiveSetpoint(result);
+              }
+            }).catch(function () {
+              if (Date.now() - started >= 10000) clearInterval(timer);
+            });
+          }, 2000);
         }).catch(function () {
           last = "";
           if (pill) pill.classList.remove("is-queued");

@@ -19,6 +19,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
 SETPOINT_REGISTER = 32769  # EWNext SEt, 0.1 C
+PENDING_SETPOINT_TTL_SEC = 10
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -324,6 +325,29 @@ def decode_flags(flags: Any) -> dict[str, bool]:
     }
 
 
+def same_setpoint(a: Any, b: Any) -> bool:
+    try:
+        return abs(float(a) - float(b)) < 0.051
+    except (TypeError, ValueError):
+        return False
+
+
+def queued_setpoint(pending: dict | None, live_setpoint: Any) -> float | None:
+    if not pending:
+        return None
+    queued = pending.get("display_value")
+    if queued is None:
+        return None
+    if live_setpoint is not None and same_setpoint(queued, live_setpoint):
+        return None
+    created = parse_ts(pending.get("created_at"))
+    if created is not None:
+        age = (datetime.now(timezone.utc) - created).total_seconds()
+        if age >= PENDING_SETPOINT_TTL_SEC:
+            return None
+    return queued
+
+
 def decorate_instrument(row: dict, pending: dict | None) -> dict:
     inst = dict(row)
     online = instrument_online(inst)
@@ -343,7 +367,7 @@ def decorate_instrument(row: dict, pending: dict | None) -> dict:
             "alarm": False,
             "defrost_active": False,
         }
-    pending_value = pending.get("display_value") if pending else None
+    pending_value = queued_setpoint(pending, setpoint)
     inst.update(
         {
             "name": display_name(inst.get("server_name"), inst.get("instrument_id") or 0),
@@ -582,9 +606,10 @@ def dashboard_shell() -> dict:
         instruments = fetchall(cur)
         cur.execute(
             """
-            SELECT id, device_id, instrument_id, kind, display_value, status
+            SELECT id, device_id, instrument_id, kind, display_value, status, created_at
             FROM jobs
             WHERE status='pending' AND kind='setpoint'
+            ORDER BY id ASC
             """
         )
         pending_jobs = fetchall(cur)
@@ -630,6 +655,21 @@ def dashboard_shell() -> dict:
         "online_n": online_n,
         "alarm_n": alarm_n,
     }
+
+
+@app.get("/api/instruments")
+def instruments_api(request: Request):
+    require_admin(request)
+    ctx = dashboard_shell()
+    return [
+        {
+            "device_id": w.get("device_id"),
+            "instrument_id": w.get("instrument_id"),
+            "last_setpoint": w.get("last_setpoint"),
+            "pending_setpoint": w.get("pending_setpoint"),
+        }
+        for w in ctx["instruments"]
+    ]
 
 
 @app.get("/", response_class=HTMLResponse)
