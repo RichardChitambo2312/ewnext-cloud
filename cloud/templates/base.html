@@ -55,13 +55,18 @@
       var input = form.querySelector(".setpoint-input");
       if (!input) return;
       var last = input.value;
-      function maybeSubmit() {
+      form.addEventListener("submit", function (event) {
+        if (!input.checkValidity() || input.value === "" || input.value === last) {
+          event.preventDefault();
+        }
+      });
+      input.addEventListener("keydown", function (event) {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
         if (!input.checkValidity() || input.value === "" || input.value === last) return;
         last = input.value;
         form.submit();
-      }
-      input.addEventListener("change", maybeSubmit);
-      input.addEventListener("blur", maybeSubmit);
+      });
     });
     setTimeout(function () {
       var el = document.activeElement;
