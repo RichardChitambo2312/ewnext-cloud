@@ -349,6 +349,122 @@ def instrument_online(row: dict) -> bool:
     return (datetime.now(timezone.utc) - seen).total_seconds() < 180
 
 
+def relative_ago(value: Any) -> str:
+    dt = parse_ts(value)
+    if dt is None:
+        return ""
+    sec = max(0, (datetime.now(timezone.utc) - dt).total_seconds())
+    if sec < 60:
+        return "Just now"
+    if sec < 3600:
+        mins = int(sec // 60)
+        return f"{mins} min{'s' if mins != 1 else ''} ago"
+    if sec < 86400:
+        hours = int(sec // 3600)
+        return f"{hours} hour{'s' if hours != 1 else ''} ago"
+    days = int(sec // 86400)
+    return f"{days} day{'s' if days != 1 else ''} ago"
+
+
+def site_status_meta(insts: list[dict]) -> dict[str, Any]:
+    online_n = sum(1 for w in insts if w.get("online"))
+    alarm_n = sum(1 for w in insts if w.get("alarm"))
+    offline_n = len(insts) - online_n
+    defrost_n = sum(1 for w in insts if w.get("defrost_active"))
+    if alarm_n:
+        status_kind = "alarm"
+        status_text = f"{alarm_n} Active Alarm{'s' if alarm_n != 1 else ''}"
+        expanded = True
+    elif offline_n:
+        status_kind = "offline"
+        status_text = f"{offline_n} Offline"
+        expanded = True
+    elif defrost_n:
+        status_kind = "maint"
+        status_text = f"{defrost_n} Maintenance Flag{'s' if defrost_n != 1 else ''}"
+        expanded = False
+    else:
+        status_kind = "ok"
+        status_text = "All Systems Normal"
+        expanded = False
+    return {
+        "online_n": online_n,
+        "alarm_n": alarm_n,
+        "offline_n": offline_n,
+        "defrost_n": defrost_n,
+        "issues": alarm_n > 0 or offline_n > 0,
+        "status_kind": status_kind,
+        "status_text": status_text,
+        "expanded": expanded,
+    }
+
+
+def compute_kpis(widgets: list[dict], sites: list[dict]) -> dict[str, Any]:
+    alarm_n = sum(1 for w in widgets if w.get("alarm"))
+    online_n = sum(1 for w in widgets if w.get("online"))
+    total = len(widgets)
+    issue_sites = [s for s in sites if s.get("issues")]
+    defrost_n = sum(1 for w in widgets if w.get("defrost_active"))
+    if not issue_sites:
+        issue_label = "All clear"
+    elif len(issue_sites) == 1:
+        issue_label = issue_sites[0]["device_id"]
+    else:
+        issue_label = f"{len(issue_sites)} sites"
+    pct = int(round(100 * online_n / total)) if total else 0
+    return {
+        "alarm_n": alarm_n,
+        "issue_n": len(issue_sites),
+        "issue_label": issue_label,
+        "online_n": online_n,
+        "total_n": total,
+        "uptime_pct": pct,
+        "maint_n": defrost_n,
+    }
+
+
+def build_alarm_feed(widgets: list[dict]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for widget in widgets:
+        name = widget.get("name") or f"Instrument {widget.get('instrument_id')}"
+        site = widget.get("device_id") or "unknown"
+        when = relative_ago(widget.get("last_seen"))
+        href = widget.get("href") or "/"
+        if widget.get("alarm"):
+            items.append(
+                {
+                    "kind": "alarm",
+                    "title": f"Alarm: {name}",
+                    "detail": site,
+                    "when": when,
+                    "href": href,
+                }
+            )
+        elif not widget.get("online"):
+            items.append(
+                {
+                    "kind": "offline",
+                    "title": f"Device Offline: {name}",
+                    "detail": site,
+                    "when": when,
+                    "href": href,
+                }
+            )
+        elif widget.get("defrost_active"):
+            items.append(
+                {
+                    "kind": "maint",
+                    "title": f"Defrost: {name}",
+                    "detail": site,
+                    "when": when,
+                    "href": href,
+                }
+            )
+    order = {"alarm": 0, "offline": 1, "maint": 2}
+    items.sort(key=lambda row: order.get(row["kind"], 9))
+    return items[:8]
+
+
 def decode_flags(flags: Any) -> dict[str, bool]:
     """Map EWNext analog RAM 4115 to CP1 / DEF1 / FAN / ALM.
 
@@ -468,6 +584,7 @@ def decorate_instrument(
             "setpoint_label": format_temp(pending_value if pending_value is not None else setpoint),
             "pending_setpoint": pending_value,
             "href": f"/instrument/{inst.get('instrument_id') or 0}?device={quote(str(inst.get('device_id') or ''), safe='')}",
+            "site_href": f"/sites/{quote(str(inst.get('device_id') or ''), safe='')}",
         }
     )
     return inst
@@ -794,16 +911,16 @@ def dashboard_shell() -> dict:
         key = str(widget.get("device_id") or "unknown")
         by_site.setdefault(key, []).append(widget)
     for device_id, insts in by_site.items():
-        site_online = sum(1 for w in insts if w.get("online"))
-        site_alarm = sum(1 for w in insts if w.get("alarm"))
+        meta = site_status_meta(insts)
+        encoded = quote(device_id, safe="")
         sites.append(
             {
                 "device_id": device_id,
                 "instruments": insts,
                 "count": len(insts),
                 "max_n": MAX_INSTRUMENTS_PER_SITE,
-                "online_n": site_online,
-                "alarm_n": site_alarm,
+                "href": f"/sites/{encoded}",
+                **meta,
             }
         )
     online_n = sum(1 for w in widgets if w.get("online"))
@@ -840,6 +957,9 @@ def dashboard_shell() -> dict:
         "online_n": online_n,
         "alarm_n": alarm_n,
         "site_n": len(sites),
+        "kpis": compute_kpis(widgets, sites),
+        "alarm_feed": build_alarm_feed(widgets),
+        "admin_name": "Admin",
     }
 
 
@@ -866,8 +986,39 @@ def home(request: Request):
     if not logged_in(request):
         return RedirectResponse("/login", status_code=302)
     ctx = dashboard_shell()
-    ctx.update({"request": request, "page": "instruments"})
-    return templates.TemplateResponse("index.html", ctx)
+    ctx.update({"request": request, "page": "dashboard"})
+    return templates.TemplateResponse("dashboard.html", ctx)
+
+
+@app.get("/sites", response_class=HTMLResponse)
+def sites_page(request: Request):
+    if not logged_in(request):
+        return RedirectResponse("/login", status_code=302)
+    ctx = dashboard_shell()
+    ctx.update({"request": request, "page": "sites"})
+    return templates.TemplateResponse("sites.html", ctx)
+
+
+@app.get("/sites/{device_id}", response_class=HTMLResponse)
+def site_detail(request: Request, device_id: str):
+    if not logged_in(request):
+        return RedirectResponse("/login", status_code=302)
+    ctx = dashboard_shell()
+    site = next((row for row in ctx["sites"] if row.get("device_id") == device_id), None)
+    if site is None:
+        raise HTTPException(404, "site not found")
+    scoped = list(site.get("instruments") or [])
+    ctx["kpis"] = compute_kpis(scoped, [site])
+    ctx["alarm_feed"] = build_alarm_feed(scoped)
+    ctx.update(
+        {
+            "request": request,
+            "page": "site",
+            "site": site,
+            "sites": [site],
+        }
+    )
+    return templates.TemplateResponse("site.html", ctx)
 
 
 @app.get("/instrument/{instrument_id}", response_class=HTMLResponse)
@@ -890,6 +1041,7 @@ def instrument_page(request: Request, instrument_id: int, device: str = "", rang
         {
             "request": request,
             "page": "instrument",
+            "admin_name": "Admin",
             "inst": inst,
             "range_key": range_key,
             "ranges": [
@@ -952,6 +1104,7 @@ def jobs_page(request: Request):
         {
             "request": request,
             "page": "jobs",
+            "admin_name": "Admin",
             "jobs": jobs,
             "readings": readings,
         }

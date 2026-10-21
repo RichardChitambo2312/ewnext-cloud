@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Keyview Cloud — Sites{% endblock %}
+{% block content %}
+        <div class="page-head">
+          <div>
+            <p class="eyebrow">Locations</p>
+            <h1>Sites</h1>
+            <p class="page-sub">Choose a site to open its dashboard. Each site is identified by the gateway Device ID and can have up to 15 instruments.</p>
+          </div>
+        </div>
+
+        {% if not sites %}
+        <article class="empty">
+          <h2>No sites yet</h2>
+          <p>Set a unique Device ID on each TRB245 EWNext Gateway. Incoming telemetry will appear here as a site.</p>
+        </article>
+        {% else %}
+        <div class="site-picker" aria-label="Choose a site">
+          {% for site in sites %}
+          <a class="site-pick-card" href="{{ site.href }}">
+            <header>
+              <p class="eyebrow">Site</p>
+              <h2>{{ site.device_id }}</h2>
+            </header>
+            <p class="site-meta">{{ site.count }} / {{ site.max_n }} instruments · {{ site.online_n }} online{% if site.alarm_n %} · {{ site.alarm_n }} alarm{% endif %}</p>
+            <span class="site-status-flag site-status-{{ site.status_kind }}">
+              <span class="dot"></span>
+              {{ site.status_text }}
+            </span>
+            <span class="site-pick-cta">Open dashboard</span>
+          </a>
+          {% endfor %}
+        </div>
+        {% endif %}
+{% endblock %}

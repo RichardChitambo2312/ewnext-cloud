@@ -6,7 +6,7 @@
 {% block content %}
         <div class="page-head">
           <div>
-            <p class="eyebrow"><a href="/">Instruments</a></p>
+            <p class="eyebrow"><a href="/sites">Sites</a> · <a href="{{ inst.site_href }}">{{ inst.device_id }}</a></p>
             <form class="name-inline" method="post" action="/instrument/name">
               <input type="hidden" name="device_id" value="{{ inst.device_id }}">
               <input type="hidden" name="instrument_id" value="{{ inst.instrument_id }}">

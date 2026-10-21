@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}{{ site.device_id }} — Keyview Cloud{% endblock %}
+{% block content %}
+        <div class="page-head">
+          <div>
+            <p class="eyebrow"><a href="/sites">Sites</a></p>
+            <h1>{{ site.device_id }}</h1>
+            <p class="page-sub">{{ site.count }} / {{ site.max_n }} instruments · {{ site.online_n }} online{% if site.alarm_n %} · {{ site.alarm_n }} alarm{% endif %}. Rename with Enter. Toggle power to switch the controller on or off. Edit setpoint, then press Enter to confirm.</p>
+          </div>
+        </div>
+
+        <section class="kpi-grid kpi-grid-site" aria-label="Site overview">
+          <article class="kpi-card">
+            <div class="kpi-copy">
+              <p class="kpi-label">Active Alarms</p>
+              <p class="kpi-value kpi-alarm">{{ kpis.alarm_n }}</p>
+            </div>
+          </article>
+          <article class="kpi-card">
+            <div class="kpi-copy">
+              <p class="kpi-label">Devices Online</p>
+              <p class="kpi-value kpi-ok">{{ kpis.online_n }}/{{ kpis.total_n }}</p>
+            </div>
+          </article>
+          <article class="kpi-card">
+            <div class="kpi-copy">
+              <p class="kpi-label">Offline</p>
+              <p class="kpi-value kpi-warn">{{ site.offline_n }}</p>
+            </div>
+          </article>
+          <article class="kpi-card">
+            <div class="kpi-copy">
+              <p class="kpi-label">Maintenance Flags</p>
+              <p class="kpi-value kpi-info">{{ kpis.maint_n }}</p>
+            </div>
+          </article>
+        </section>
+
+        {% include "instrument_cards.html" %}
+{% endblock %}

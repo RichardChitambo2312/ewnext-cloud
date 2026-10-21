@@ -29,9 +29,13 @@
         <span class="sidebar-mini">Cloud</span>
       </div>
       <nav class="sidebar-nav" aria-label="App">
-        <a class="side-link{% if page == 'instruments' %} active{% endif %}" href="/">
+        <a class="side-link{% if page == 'dashboard' %} active{% endif %}" href="/">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1v-9.5Z" stroke-linejoin="round"/></svg>
+          <span>Dashboard</span>
+        </a>
+        <a class="side-link{% if page == 'sites' or page == 'site' or page == 'instrument' %} active{% endif %}" href="/sites">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
-          <span>Instruments</span>
+          <span>Sites</span>
         </a>
         <a class="side-link{% if page == 'jobs' %} active{% endif %}" href="/jobs">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 6h14M5 12h14M5 18h9" stroke-linecap="round"/></svg>
@@ -39,17 +43,17 @@
         </a>
       </nav>
       <div class="sidebar-foot">
-        <div class="side-user">
-          <strong>Admin</strong>
-          <span>Keyview</span>
+        <div class="side-user-row">
+          <span class="side-avatar" aria-hidden="true">A</span>
+          <strong>{{ admin_name or "Admin" }}</strong>
+          <form method="post" action="/logout">
+            <button class="side-logout" type="submit">Log Out</button>
+          </form>
         </div>
-        <form method="post" action="/logout">
-          <button class="side-logout" type="submit">Sign out</button>
-        </form>
       </div>
     </aside>
 
-    <div class="shell-content">
+    <div class="shell-content{% if page in ('dashboard', 'sites') %} is-overview{% endif %}">
       <header class="shell-topbar">
         <div class="top-health top-health-{{ health.level }}">
           <span class="top-health-label">{{ health.label }}</span>
@@ -65,9 +69,13 @@
       </main>
     </div>
     <nav class="tabbar" aria-label="App">
-      <a class="tab-link{% if page == 'instruments' or page == 'instrument' %} active{% endif %}" href="/">
+      <a class="tab-link{% if page == 'dashboard' %} active{% endif %}" href="/">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1v-9.5Z" stroke-linejoin="round"/></svg>
+        <span>Dashboard</span>
+      </a>
+      <a class="tab-link{% if page == 'sites' or page == 'site' or page == 'instrument' %} active{% endif %}" href="/sites">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
-        <span>Instruments</span>
+        <span>Sites</span>
       </a>
       <a class="tab-link{% if page == 'jobs' %} active{% endif %}" href="/jobs">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 6h14M5 12h14M5 18h9" stroke-linecap="round"/></svg>
