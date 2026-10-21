@@ -77,17 +77,17 @@ def q(sql: str) -> str:
 
 def init_db() -> None:
     serial = "SERIAL PRIMARY KEY" if _is_pg() else "INTEGER PRIMARY KEY AUTOINCREMENT"
-        ts = "TIMESTAMPTZ" if _is_pg() else "TEXT"
-        with db() as conn:
-            cur = conn.cursor()
-            cur.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS readings (
-                    id {serial},
-                    device_id TEXT NOT NULL,
-                    instrument_id INTEGER NOT NULL,
-                    server_name TEXT,
-                    values_json TEXT NOT NULL,
+    ts = "TIMESTAMPTZ" if _is_pg() else "TEXT"
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS readings (
+                id {serial},
+                device_id TEXT NOT NULL,
+                instrument_id INTEGER NOT NULL,
+                server_name TEXT,
+                values_json TEXT NOT NULL,
                 probe1 REAL,
                 probe2 REAL,
                 flags INTEGER,
