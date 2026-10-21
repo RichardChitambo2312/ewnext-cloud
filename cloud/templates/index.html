@@ -80,19 +80,19 @@
             </header>
 
             <div class="status-icons" aria-label="Operating status">
-              <span class="si{% if inst.cooling %} on-cool{% endif %}" title="Cooling">
+              <span class="si{% if inst.cooling %} on-cool{% endif %}" title="CP1 cooling">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
                   <path d="M12 2v20M4.9 6.5l14.2 11M4.9 17.5l14.2-11" stroke-linecap="round"/>
                   <path d="M12 6l-2-2M12 6l2-2M12 18l-2 2M12 18l2 2" stroke-linecap="round"/>
                 </svg>
               </span>
-              <span class="si{% if inst.fan %} on-fan{% endif %}" title="Fan">
+              <span class="si{% if inst.fan %} on-fan{% endif %}" title="FAN">
                 <svg class="{% if inst.fan %}spin{% endif %}" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
                   <circle cx="12" cy="12" r="2.5"/>
                   <path d="M12 4c3 2 3 5 0 8 3-3 6-3 8 0-2-3-5-3-8 0 3 3 3 6 0 8 3-2 3-5 0-8-3 3-6 3-8 0 2 3 5 3 8 0-3-3-3-6 0-8z"/>
                 </svg>
               </span>
-              <span class="si{% if inst.humidity %} on-hum{% endif %}" title="Humidity">
+              <span class="si{% if inst.defrost_active %} on-defrost{% endif %}" title="DEF1 defrost">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
                   <path d="M12 3s6 7 6 11a6 6 0 1 1-12 0c0-4 6-11 6-11z" stroke-linejoin="round"/>
                 </svg>
@@ -115,17 +115,29 @@
                 <dd><span class="pill pill-temp">{{ inst.temperature_label }}</span></dd>
               </div>
               <div>
-                <dt>Defrost</dt>
+                <dt>Defrost temp</dt>
                 <dd><span class="pill pill-defrost">{{ inst.defrost_label }}</span></dd>
               </div>
               <div>
-                <dt>Set Point</dt>
+                <dt>Setpoint value</dt>
                 <dd>
                   <span class="pill pill-setpoint">{{ inst.setpoint_label }}</span>
                   {% if inst.pending_setpoint is not none %}
                   <span class="queued">queued</span>
                   {% endif %}
                 </dd>
+              </div>
+              <div>
+                <dt>CP1 cooling</dt>
+                <dd><span class="pill {% if inst.cooling %}pill-on{% else %}pill-off{% endif %}">{{ inst.cp1_label }}</span></dd>
+              </div>
+              <div>
+                <dt>DEF1 defrost</dt>
+                <dd><span class="pill {% if inst.defrost_active %}pill-on-defrost{% else %}pill-off{% endif %}">{{ inst.def1_label }}</span></dd>
+              </div>
+              <div>
+                <dt>FAN</dt>
+                <dd><span class="pill {% if inst.fan %}pill-on{% else %}pill-off{% endif %}">{{ inst.fan_label }}</span></dd>
               </div>
             </dl>
 

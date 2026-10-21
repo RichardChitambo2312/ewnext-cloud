@@ -184,14 +184,14 @@ def require_admin(request: Request) -> None:
         raise HTTPException(401, "login required")
 
 
-def decode_values(values: Any) -> tuple[float | None, float | None, int | None]:
+def decode_values(values: Any) -> tuple[float | None, float | None, int | None, float | None]:
     if isinstance(values, str):
         try:
             values = json.loads(values)
         except json.JSONDecodeError:
             values = []
     if not isinstance(values, list) or not values:
-        return None, None, None
+        return None, None, None, None
     nums = []
     for v in values:
         try:
@@ -200,13 +200,14 @@ def decode_values(values: Any) -> tuple[float | None, float | None, int | None]:
             nums.append(None)
     probe1 = nums[0] / 10.0 if nums and nums[0] is not None else None
     probe2 = nums[1] / 10.0 if len(nums) > 1 and nums[1] is not None else None
+    # EWNext RAM block 4110: [Pb1, Pb2, Pb3, _, _, SEt, status]
+    setpoint = nums[5] / 10.0 if len(nums) > 5 and nums[5] is not None else None
     flags = None
     if len(nums) > 6 and nums[6] is not None:
         flags = int(nums[6])
     elif len(nums) > 2 and nums[2] is not None and float(nums[2]) == int(nums[2]):
-        # Some Teltonika maps pack digital status as the 3rd register.
         flags = int(nums[2])
-    return probe1, probe2, flags
+    return probe1, probe2, flags, setpoint
 
 
 def format_temp(value: Any) -> str:
@@ -259,6 +260,11 @@ def instrument_online(row: dict) -> bool:
 
 
 def decode_flags(flags: Any) -> dict[str, bool]:
+    """Map EWNext status word to CP1 / DEF1 / FAN.
+
+    Live 4116 values use the high LED bits (8/9/10). If those are all
+    clear, fall back to the low output bits (0/1/2).
+    """
     try:
         bits = int(flags)
     except (TypeError, ValueError):
@@ -269,12 +275,21 @@ def decode_flags(flags: Any) -> dict[str, bool]:
             "alarm": False,
             "defrost_active": False,
         }
+    high = bits & 0x0700
+    if high:
+        cooling = bool(bits & 0x0100)  # CP1
+        defrost_active = bool(bits & 0x0200)  # DEF1
+        fan = bool(bits & 0x0400)  # FAN
+    else:
+        cooling = bool(bits & 0x01)
+        defrost_active = bool(bits & 0x02)
+        fan = bool(bits & 0x04)
     return {
-        "cooling": bool(bits & 0x01),
-        "defrost_active": bool(bits & 0x02),
-        "fan": bool(bits & 0x04),
+        "cooling": cooling,
+        "defrost_active": defrost_active,
+        "fan": fan,
         "alarm": bool(bits & 0x08),
-        "humidity": bool(bits & 0x10),
+        "humidity": defrost_active,
     }
 
 
@@ -307,7 +322,11 @@ def decorate_instrument(row: dict, pending: dict | None) -> dict:
             "cooling": flags["cooling"],
             "fan": flags["fan"],
             "humidity": flags["humidity"],
+            "defrost_active": flags["defrost_active"],
             "alarm": flags["alarm"],
+            "cp1_label": "ON" if flags["cooling"] else "OFF",
+            "def1_label": "ON" if flags["defrost_active"] else "OFF",
+            "fan_label": "ON" if flags["fan"] else "OFF",
             "temperature_label": format_temp(probe1),
             "defrost_label": format_temp(inst.get("last_probe2")),
             "setpoint_label": format_temp(pending_value if pending_value is not None else setpoint),
@@ -355,7 +374,7 @@ async def ingest(request: Request) -> JSONResponse:
     except (TypeError, ValueError):
         raise HTTPException(400, "instrument_id required")
     values = body.get("values") or []
-    probe1, probe2, flags = decode_values(values)
+    probe1, probe2, flags, live_setpoint = decode_values(values)
     received = now_iso()
     values_store = json.dumps(values)
 
@@ -388,8 +407,8 @@ async def ingest(request: Request) -> JSONResponse:
             (device_id, instrument_id),
         )
         prev = cur.fetchone()
-        last_setpoint = None
-        if prev:
+        last_setpoint = live_setpoint
+        if last_setpoint is None and prev:
             last_setpoint = prev[0] if not isinstance(prev, dict) else prev.get("last_setpoint")
         stale = 1 if body.get("stale") else 0
         if _is_pg():
@@ -403,6 +422,7 @@ async def ingest(request: Request) -> JSONResponse:
                     server_name = EXCLUDED.server_name,
                     last_probe1 = EXCLUDED.last_probe1,
                     last_probe2 = EXCLUDED.last_probe2,
+                    last_setpoint = COALESCE(EXCLUDED.last_setpoint, instruments.last_setpoint),
                     last_flags = EXCLUDED.last_flags,
                     last_stale = EXCLUDED.last_stale,
                     last_seen = EXCLUDED.last_seen
@@ -430,6 +450,7 @@ async def ingest(request: Request) -> JSONResponse:
                     server_name = excluded.server_name,
                     last_probe1 = excluded.last_probe1,
                     last_probe2 = excluded.last_probe2,
+                    last_setpoint = COALESCE(excluded.last_setpoint, instruments.last_setpoint),
                     last_flags = excluded.last_flags,
                     last_stale = excluded.last_stale,
                     last_seen = excluded.last_seen

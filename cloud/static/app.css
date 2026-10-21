@@ -362,8 +362,9 @@ button {
   color: var(--ok);
 }
 
-.si.on-hum {
-  color: #38bdf8;
+.si.on-hum,
+.si.on-defrost {
+  color: var(--defrost);
 }
 
 .si.on-alarm {
@@ -427,6 +428,30 @@ button {
   color: var(--setpoint-fg);
   background: var(--setpoint-bg);
   border-color: rgba(51, 65, 85, 0.15);
+}
+
+.pill-on {
+  color: #15803d;
+  background: var(--ok-soft);
+  border-color: rgba(34, 197, 94, 0.28);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.pill-on-defrost {
+  color: var(--defrost);
+  background: var(--defrost-soft);
+  border-color: rgba(225, 29, 72, 0.22);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.pill-off {
+  color: var(--muted);
+  background: var(--fog);
+  border-color: var(--line);
+  font-weight: 700;
+  letter-spacing: 0.04em;
 }
 
 .dot {
