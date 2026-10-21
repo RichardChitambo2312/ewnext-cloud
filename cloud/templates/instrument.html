@@ -157,38 +157,44 @@
 
             var statusRibbon = {
               id: "statusRibbon",
-              afterDatasetsDraw: function (chart) {
+              afterDraw: function (chart) {
                 var pts = chart.$statusPoints || [];
-                var area = chart.chartArea;
                 var xScale = chart.scales.x;
-                if (!pts.length || !area || !xScale) return;
+                var yStatus = chart.scales.yStatus;
+                if (!pts.length || !xScale || !yStatus) return;
                 var ctx = chart.ctx;
-                var railH = 16;
-                var top = area.bottom + 8;
-                var laneH = 3;
+                var area = chart.chartArea;
+                var left = area.left;
+                var right = area.right;
+                var top = yStatus.top + 6;
+                var bottom = yStatus.bottom - 2;
+                var height = Math.max(24, bottom - top);
+                var laneGap = 3;
+                var laneH = Math.max(5, (height - laneGap * (statusLanes.length - 1)) / statusLanes.length);
                 ctx.save();
-                ctx.fillStyle = "rgba(226,230,236,0.65)";
-                roundRect(ctx, area.left, top, area.right - area.left, railH, 6);
+                ctx.fillStyle = "rgba(241,245,249,0.95)";
+                roundRect(ctx, left, yStatus.top + 2, right - left, Math.max(20, yStatus.bottom - yStatus.top - 4), 8);
                 ctx.fill();
+                ctx.beginPath();
+                ctx.strokeStyle = "rgba(203,213,225,0.95)";
+                ctx.lineWidth = 1;
+                ctx.moveTo(left, yStatus.top + 1);
+                ctx.lineTo(right, yStatus.top + 1);
+                ctx.stroke();
                 statusLanes.forEach(function (lane, li) {
-                  var y = top + 2 + li * 3;
+                  var y = top + li * (laneH + laneGap);
+                  ctx.fillStyle = "rgba(226,232,240,0.9)";
+                  roundRect(ctx, left, y, right - left, laneH, 3);
+                  ctx.fill();
                   runs(pts, lane.key).forEach(function (span) {
                     var x0 = xScale.getPixelForValue(span[0]);
                     var x1 = xScale.getPixelForValue(span[1]);
                     ctx.fillStyle = lane.color;
-                    roundRect(ctx, Math.min(x0, x1) - 1, y, Math.max(3, Math.abs(x1 - x0) + 2), laneH, 1.5);
+                    roundRect(ctx, Math.min(x0, x1) - 1, y, Math.max(4, Math.abs(x1 - x0) + 2), laneH, 3);
                     ctx.fill();
                   });
                 });
                 ctx.restore();
-                runs(pts, "alarm").forEach(function (span) {
-                  var x0 = xScale.getPixelForValue(span[0]);
-                  var x1 = xScale.getPixelForValue(span[1]);
-                  ctx.save();
-                  ctx.fillStyle = "rgba(239,68,68,0.08)";
-                  ctx.fillRect(Math.min(x0, x1) - 2, area.top, Math.max(4, Math.abs(x1 - x0) + 4), area.bottom - area.top);
-                  ctx.restore();
-                });
               }
             };
 
@@ -206,19 +212,28 @@
               var data = {
                 labels: labels,
                 datasets: [
-                  { label: "Temperature", data: series(points, "temp"), borderColor: colors.temp, backgroundColor: "transparent", tension: 0.2, pointRadius: 0, borderWidth: 2 },
-                  { label: "Defrost temp", data: series(points, "defrost"), borderColor: colors.defrost, backgroundColor: "transparent", tension: 0.2, pointRadius: 0, borderWidth: 2 },
-                  { label: "Setpoint", data: series(points, "setpoint"), borderColor: colors.setpoint, backgroundColor: "transparent", tension: 0, pointRadius: 0, borderWidth: 2, borderDash: [5, 4] }
+                  { label: "Temperature", data: series(points, "temp"), yAxisID: "y", borderColor: colors.temp, backgroundColor: "transparent", tension: 0.2, pointRadius: 0, borderWidth: 2 },
+                  { label: "Defrost temp", data: series(points, "defrost"), yAxisID: "y", borderColor: colors.defrost, backgroundColor: "transparent", tension: 0.2, pointRadius: 0, borderWidth: 2 },
+                  { label: "Setpoint", data: series(points, "setpoint"), yAxisID: "y", borderColor: colors.setpoint, backgroundColor: "transparent", tension: 0, pointRadius: 0, borderWidth: 2, borderDash: [5, 4] },
+                  { label: "Status", data: points.map(function () { return 0; }), yAxisID: "yStatus", borderColor: "transparent", backgroundColor: "transparent", pointRadius: 0, borderWidth: 0, showLine: false }
                 ]
               };
               var options = {
                 responsive: true,
                 maintainAspectRatio: false,
                 interaction: { mode: "index", intersect: false },
-                layout: { padding: { bottom: 28, right: 8 } },
+                layout: { padding: { right: 8 } },
                 plugins: {
-                  legend: { position: "top", labels: { boxWidth: 12, usePointStyle: true } },
+                  legend: {
+                    position: "top",
+                    labels: {
+                      boxWidth: 12,
+                      usePointStyle: true,
+                      filter: function (item) { return item.text !== "Status"; }
+                    }
+                  },
                   tooltip: {
+                    filter: function (item) { return item.dataset.yAxisID !== "yStatus"; },
                     callbacks: {
                       afterBody: function (items) {
                         if (!items.length) return [];
@@ -238,7 +253,26 @@
                     ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 8, color: "#7a8494" },
                     grid: { color: "rgba(226,230,236,0.8)" }
                   },
+                  yStatus: {
+                    type: "linear",
+                    position: "left",
+                    stack: "trend",
+                    stackWeight: 1.2,
+                    min: 0,
+                    max: 4,
+                    offset: false,
+                    clip: false,
+                    title: { display: false },
+                    ticks: { display: false },
+                    grid: { display: false, drawOnChartArea: false },
+                    border: { display: false }
+                  },
                   y: {
+                    type: "linear",
+                    position: "left",
+                    stack: "trend",
+                    stackWeight: 4,
+                    clip: true,
                     title: { display: true, text: "°C" },
                     ticks: { color: "#7a8494" },
                     grid: { color: "rgba(226,230,236,0.8)" }
