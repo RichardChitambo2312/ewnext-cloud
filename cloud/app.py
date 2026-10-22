@@ -1281,15 +1281,24 @@ def display_name(label: Any, server_name: Any, instrument_id: int) -> str:
 
 
 def _backfill_instrument_labels(cur) -> None:
-    cur.execute("SELECT device_id, instrument_id, server_name, label FROM instruments")
-    for row in fetchall(cur):
-        if str(row.get("label") or "").strip():
-            continue
-        label = display_name(None, row.get("server_name"), int(row.get("instrument_id") or 0))
-        cur.execute(
-            q("UPDATE instruments SET label=? WHERE device_id=? AND instrument_id=?"),
-            (label, row.get("device_id"), row.get("instrument_id")),
+    cur.execute(
+        """
+        UPDATE instruments
+        SET label = REPLACE(TRIM(server_name), '_', ' ')
+        WHERE (label IS NULL OR TRIM(label) = '')
+          AND server_name IS NOT NULL
+          AND TRIM(server_name) <> ''
+        """
+    )
+    cur.execute(
+        q(
+            """
+            UPDATE instruments
+            SET label = 'Instrument ' || CAST(instrument_id AS TEXT)
+            WHERE (label IS NULL OR TRIM(label) = '')
+            """
         )
+    )
 
 
 def parse_ts(value: Any) -> datetime | None:
@@ -1705,6 +1714,8 @@ def fetchall(cur) -> list[dict]:
 
 @app.on_event("startup")
 def on_startup() -> None:
+    if os.environ.get("RENDER") == "true" and not _is_pg():
+        raise RuntimeError("DATABASE_URL is required on Render so names and settings persist across deploys")
     init_db()
 
 
@@ -1784,8 +1795,6 @@ async def ingest(request: Request) -> JSONResponse:
                     last_setpoint, last_flags, last_stale, last_seen
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (device_id, instrument_id) DO UPDATE SET
-                    server_name = COALESCE(NULLIF(TRIM(instruments.server_name), ''), EXCLUDED.server_name),
-                    label = COALESCE(NULLIF(TRIM(instruments.label), ''), EXCLUDED.label),
                     last_probe1 = EXCLUDED.last_probe1,
                     last_probe2 = EXCLUDED.last_probe2,
                     last_setpoint = COALESCE(EXCLUDED.last_setpoint, instruments.last_setpoint),
@@ -1814,8 +1823,6 @@ async def ingest(request: Request) -> JSONResponse:
                     last_setpoint, last_flags, last_stale, last_seen
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (device_id, instrument_id) DO UPDATE SET
-                    server_name = COALESCE(NULLIF(TRIM(instruments.server_name), ''), excluded.server_name),
-                    label = COALESCE(NULLIF(TRIM(instruments.label), ''), excluded.label),
                     last_probe1 = excluded.last_probe1,
                     last_probe2 = excluded.last_probe2,
                     last_setpoint = COALESCE(excluded.last_setpoint, instruments.last_setpoint),
