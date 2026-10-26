@@ -265,6 +265,29 @@ def init_db() -> None:
         _backfill_subscriptions(cur)
         _backfill_instrument_labels(cur)
         conn.commit()
+        _log_store_counts(cur)
+
+
+def _count_rows(cur, table: str) -> int:
+    cur.execute(f"SELECT COUNT(*) FROM {table}")
+    row = cur.fetchone()
+    if row is None:
+        return 0
+    if isinstance(row, dict) or hasattr(row, "keys"):
+        return int(list(dict(row).values())[0] or 0)
+    return int(row[0] or 0)
+
+
+def _log_store_counts(cur) -> None:
+    kind = "postgres" if _is_pg() else "sqlite"
+    print(
+        "ewnext store="
+        + kind
+        + f" sites={_count_rows(cur, 'sites')}"
+        + f" instruments={_count_rows(cur, 'instruments')}"
+        + f" readings={_count_rows(cur, 'readings')}"
+        + f" users={_count_rows(cur, 'app_users')}"
+    )
 
 
 def _ensure_column(cur, table: str, column: str, typedef: str) -> None:
@@ -500,14 +523,20 @@ def _backfill_subscriptions(cur) -> None:
         "SELECT device_id, created_at, subscription_start, subscription_until, subscription_locked FROM sites"
     )
     for row in fetchall(cur):
-        start = parse_ts(row.get("subscription_start")) or parse_ts(row.get("created_at")) or now
-        until = parse_ts(row.get("subscription_until")) or subscription_period_end(start)
+        start = parse_ts(row.get("subscription_start"))
+        until = parse_ts(row.get("subscription_until"))
+        if start and until:
+            continue
+        start = start or parse_ts(row.get("created_at")) or now
+        until = until or subscription_period_end(start)
         locked = 1 if now > until or int(row.get("subscription_locked") or 0) else 0
         cur.execute(
             q(
                 """
                 UPDATE sites
-                SET subscription_start=?, subscription_until=?, subscription_locked=?
+                SET subscription_start=COALESCE(subscription_start, ?),
+                    subscription_until=COALESCE(subscription_until, ?),
+                    subscription_locked=?
                 WHERE device_id=?
                 """
             ),
@@ -1735,7 +1764,11 @@ def on_startup() -> None:
 
 @app.get("/health")
 def health() -> dict:
-    return {"ok": True, "service": "ewnext-cloud"}
+    return {
+        "ok": True,
+        "service": "ewnext-cloud",
+        "store": "postgres" if _is_pg() else "sqlite",
+    }
 
 
 @app.post("/api/modbus")
@@ -1801,49 +1834,22 @@ async def ingest(request: Request) -> JSONResponse:
         stale = 1 if body.get("stale") else 0
         frozen_label = display_name(None, body.get("server_name"), instrument_id)
         if site_accepts_instrument(cur, device_id, instrument_id):
-          if _is_pg():
             cur.execute(
-                """
-                INSERT INTO instruments (
-                    device_id, instrument_id, server_name, label, last_probe1, last_probe2,
-                    last_setpoint, last_flags, last_stale, last_seen
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (device_id, instrument_id) DO UPDATE SET
-                    last_probe1 = EXCLUDED.last_probe1,
-                    last_probe2 = EXCLUDED.last_probe2,
-                    last_setpoint = COALESCE(EXCLUDED.last_setpoint, instruments.last_setpoint),
-                    last_flags = EXCLUDED.last_flags,
-                    last_stale = EXCLUDED.last_stale,
-                    last_seen = EXCLUDED.last_seen
-                """,
-                (
-                    device_id,
-                    instrument_id,
-                    body.get("server_name"),
-                    frozen_label,
-                    probe1,
-                    probe2,
-                    last_setpoint,
-                    flags,
-                    stale,
-                    received,
+                q(
+                    """
+                    INSERT INTO instruments (
+                        device_id, instrument_id, server_name, label, last_probe1, last_probe2,
+                        last_setpoint, last_flags, last_stale, last_seen
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (device_id, instrument_id) DO UPDATE SET
+                        last_probe1 = EXCLUDED.last_probe1,
+                        last_probe2 = EXCLUDED.last_probe2,
+                        last_setpoint = COALESCE(EXCLUDED.last_setpoint, instruments.last_setpoint),
+                        last_flags = EXCLUDED.last_flags,
+                        last_stale = EXCLUDED.last_stale,
+                        last_seen = EXCLUDED.last_seen
+                    """
                 ),
-            )
-          else:
-            cur.execute(
-                """
-                INSERT INTO instruments (
-                    device_id, instrument_id, server_name, label, last_probe1, last_probe2,
-                    last_setpoint, last_flags, last_stale, last_seen
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (device_id, instrument_id) DO UPDATE SET
-                    last_probe1 = excluded.last_probe1,
-                    last_probe2 = excluded.last_probe2,
-                    last_setpoint = COALESCE(excluded.last_setpoint, instruments.last_setpoint),
-                    last_flags = excluded.last_flags,
-                    last_stale = excluded.last_stale,
-                    last_seen = excluded.last_seen
-                """,
                 (
                     device_id,
                     instrument_id,
