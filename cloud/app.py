@@ -783,7 +783,19 @@ def require_subscription_view(request: Request, device_id: str) -> None:
         raise HTTPException(403, "device locked: subscription expired")
 
 
+BACK_LINKS = {
+    "site": ("/sites", "Sites"),
+    "instrument": ("/sites", "Sites"),
+    "alarm-history": ("/sites", "Sites"),
+    "organisations": ("/", "Dashboard"),
+    "users": ("/", "Dashboard"),
+    "raw-data": ("/", "Dashboard"),
+    "device-admin": ("/", "Dashboard"),
+}
+
+
 def attach_session(ctx: dict, request: Request, page: str) -> dict:
+    back = BACK_LINKS.get(page)
     ctx.update(
         {
             "request": request,
@@ -791,6 +803,8 @@ def attach_session(ctx: dict, request: Request, page: str) -> dict:
             "admin_name": session_name(request),
             "is_manager": is_manager(request),
             "is_super_admin": is_super_admin(request),
+            "back_href": back[0] if back else None,
+            "back_label": back[1] if back else "Back",
         }
     )
     return ctx
@@ -2149,7 +2163,15 @@ def site_detail(request: Request, device_id: str):
     ctx["kpis"] = compute_kpis(scoped, [site])
     ctx["alarm_feed"] = build_alarm_feed(scoped)
     attach_session(ctx, request, "site")
-    ctx.update({"site": site, "sites": [site], "device_locked": bool(site.get("subscription_locked"))})
+    ctx.update(
+        {
+            "site": site,
+            "sites": [site],
+            "device_locked": bool(site.get("subscription_locked")),
+            "back_href": "/sites",
+            "back_label": "Sites",
+        }
+    )
     return templates.TemplateResponse("site.html", ctx)
 
 
@@ -2175,6 +2197,8 @@ def instrument_page(request: Request, instrument_id: int, device: str = "", rang
         {
             "inst": inst,
             "device_locked": bool(inst.get("subscription_locked")),
+            "back_href": inst.get("site_href") or "/sites",
+            "back_label": inst.get("site_name") or "Site",
             "range_key": range_key,
             "ranges": [
                 ("1h", "1 hr"),
@@ -2199,6 +2223,8 @@ def instrument_alarm_history(request: Request, instrument_id: int, device: str =
         {
             "inst": inst,
             "device_locked": bool(inst.get("subscription_locked")),
+            "back_href": inst.get("href") or inst.get("site_href") or "/sites",
+            "back_label": inst.get("name") or "Live",
             "alarm_events": events,
             "alarm_active_n": sum(1 for e in events if e.get("active")),
             "alarm_total_n": len(events),

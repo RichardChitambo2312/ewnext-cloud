@@ -276,6 +276,28 @@ button {
   width: 100%;
 }
 
+.page-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 12px;
+  color: var(--nav);
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.page-back svg {
+  flex: 0 0 auto;
+}
+
+.page-back:hover {
+  color: var(--nav-deep);
+}
+
+.mobile-back {
+  display: none;
+}
+
 .page-head {
   display: flex;
   justify-content: space-between;
@@ -700,7 +722,8 @@ button {
 }
 
 .si-defrost {
-  --si-icon: url("/static/icons/defrost.png");
+  --si-icon: url("/static/icons/defrost.svg");
+  transform: scale(1.12);
 }
 
 .si-alarm {
@@ -2034,6 +2057,22 @@ th {
     padding: calc(8px + env(safe-area-inset-top)) 16px 8px;
     background: linear-gradient(180deg, var(--nav) 0%, var(--nav-deep) 100%);
     color: #fff;
+  }
+
+  .mobile-back {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    margin-left: -6px;
+    border-radius: 999px;
+    color: #fff;
+    flex: 0 0 auto;
+  }
+
+  .page-back {
+    display: none;
   }
 
   .mobile-brand {

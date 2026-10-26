@@ -8,12 +8,19 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>{% block title %}Keyview Cloud{% endblock %}</title>
-  <link rel="stylesheet" href="/static/app.css?v=sub1">
+  <link rel="stylesheet" href="/static/app.css?v=nav1">
   {% block extra_head %}{% endblock %}
 </head>
 <body>
   <div class="shell">
     <header class="mobile-bar">
+      {% if back_href %}
+      <a class="mobile-back" href="{{ back_href }}" aria-label="Back to {{ back_label or 'previous page' }}">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M15 5 8 12l7 7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </a>
+      {% else %}
+      <span class="mobile-back" aria-hidden="true"></span>
+      {% endif %}
       <a class="mobile-brand" href="/" aria-label="Keyview">
         <img src="/static/brand/keyview-logo-white.png" alt="Keyview Intelligent Monitoring">
       </a>
@@ -79,6 +86,7 @@
       </header>
 
       <main class="shell-main">
+        {% include "back_btn.html" %}
         {% if device_locked %}
         <aside class="lock-banner" role="alert">
           <strong>Device locked</strong>
