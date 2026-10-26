@@ -57,6 +57,8 @@
                   <td>
                     {% if j.kind == "power" %}
                       {{ "On" if j.display_value else "Off" }}
+                    {% elif j.kind == "defrost" %}
+                      Manual
                     {% else %}
                       {{ '%.1f'|format(j.display_value) }} °C
                     {% endif %}

@@ -8,7 +8,7 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>{% block title %}Keyview Cloud{% endblock %}</title>
-  <link rel="stylesheet" href="/static/app.css?v=nav1">
+  <link rel="stylesheet" href="/static/app.css?v=defrost1">
   {% block extra_head %}{% endblock %}
 </head>
 <body>
@@ -272,6 +272,72 @@
           }, 2000);
         }).catch(function () {
           setSwitch(!wantOn, false);
+        });
+      });
+    });
+    document.querySelectorAll(".defrost-toggle").forEach(function (form) {
+      var btn = form.querySelector(".defrost-btn");
+      var label = form.querySelector(".defrost-btn-label");
+      if (!btn) return;
+      function setDefrost(on, queued) {
+        btn.classList.toggle("is-on", !!on);
+        btn.classList.toggle("is-queued", !!queued);
+        btn.setAttribute("aria-pressed", on ? "true" : "false");
+        btn.disabled = !!on && !queued;
+        if (label) label.textContent = queued ? "Starting…" : (on ? "Defrosting" : "Manual defrost");
+      }
+      function pullDefrost() {
+        var deviceId = form.querySelector("[name=device_id]").value;
+        var instrumentId = form.querySelector("[name=instrument_id]").value;
+        return fetch("/api/instruments", {
+          credentials: "same-origin",
+          headers: { Accept: "application/json" }
+        }).then(function (res) {
+          if (!res.ok) throw new Error("status failed");
+          return res.json();
+        }).then(function (rows) {
+          var row = (rows || []).find(function (item) {
+            return String(item.device_id) === String(deviceId)
+              && String(item.instrument_id) === String(instrumentId);
+          });
+          if (!row) return null;
+          if (row.live_defrost) {
+            setDefrost(true, false);
+            return "confirmed";
+          }
+          return row.live_defrost;
+        });
+      }
+      form.addEventListener("submit", function (event) {
+        event.preventDefault();
+        if (btn.classList.contains("is-queued")) return;
+        if (btn.classList.contains("is-on") && !btn.classList.contains("is-queued")) return;
+        setDefrost(true, true);
+        fetch("/defrost", {
+          method: "POST",
+          body: new FormData(form),
+          headers: { Accept: "application/json" },
+          credentials: "same-origin"
+        }).then(function (res) {
+          if (!res.ok) throw new Error("queue failed");
+          var started = Date.now();
+          var timer = setInterval(function () {
+            pullDefrost().then(function (result) {
+              var timedOut = Date.now() - started >= 10000;
+              if (result === "confirmed") {
+                clearInterval(timer);
+                return;
+              }
+              if (timedOut) {
+                clearInterval(timer);
+                setDefrost(!!result, false);
+              }
+            }).catch(function () {
+              if (Date.now() - started >= 10000) clearInterval(timer);
+            });
+          }, 2000);
+        }).catch(function () {
+          setDefrost(false, false);
         });
       });
     });

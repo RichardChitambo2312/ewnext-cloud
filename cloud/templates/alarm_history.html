@@ -21,17 +21,21 @@
               </span>
             </p>
           </div>
-          <form class="power-toggle" method="post" action="/power">
-            <input type="hidden" name="device_id" value="{{ inst.device_id }}">
-            <input type="hidden" name="instrument_id" value="{{ inst.instrument_id }}">
-            <input type="hidden" name="next" value="{{ inst.alarm_history_href }}">
-            <input type="hidden" name="power" value="{{ 1 if inst.powered else 0 }}">
-            <label class="switch{% if inst.pending_power is not none %} is-queued{% endif %}">
-              <input class="power-input" type="checkbox" {% if inst.powered %}checked{% endif %} aria-label="Controller power">
-              <span class="switch-ui"></span>
-              <span class="switch-label">{% if inst.powered %}On{% else %}Off{% endif %}</span>
-            </label>
-          </form>
+          <div class="device-actions">
+            <form class="power-toggle" method="post" action="/power">
+              <input type="hidden" name="device_id" value="{{ inst.device_id }}">
+              <input type="hidden" name="instrument_id" value="{{ inst.instrument_id }}">
+              <input type="hidden" name="next" value="{{ inst.alarm_history_href }}">
+              <input type="hidden" name="power" value="{{ 1 if inst.powered else 0 }}">
+              <label class="switch{% if inst.pending_power is not none %} is-queued{% endif %}">
+                <input class="power-input" type="checkbox" {% if inst.powered %}checked{% endif %} aria-label="Controller power">
+                <span class="switch-ui"></span>
+                <span class="switch-label">{% if inst.powered %}On{% else %}Off{% endif %}</span>
+              </label>
+            </form>
+            {% set defrost_next = inst.alarm_history_href %}
+            {% include "defrost_btn.html" %}
+          </div>
         </div>
         {% include "instrument_tabs.html" %}
         {% include "status_strip.html" %}

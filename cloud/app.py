@@ -29,9 +29,10 @@ MAX_INSTRUMENTS_PER_SITE = 15
 SUBSCRIPTION_DAYS = 365
 SUBSCRIPTION_DUE_DAYS = 30
 SETPOINT_REGISTER = 32769  # EWNext SEt, 0.1 C
-POWER_REGISTER = 4123  # Ronon / RoFFoFF command word
+POWER_REGISTER = 4123  # Ronon / RoFFoFF / Att_Sbr command word
 POWER_ON_MASK = 4  # Ronon Device on
 POWER_OFF_MASK = 8  # RoFFoFF Device off
+DEFROST_MASK = 4096  # Att_Sbr Manual Defrost activation
 STANDBY_MASK = 1  # STD-BY in analog RAM 4115
 NAME_MAX_LEN = 80
 EMAIL_MAX_LEN = 120
@@ -1530,6 +1531,19 @@ def same_setpoint(a: Any, b: Any) -> bool:
         return False
 
 
+def queued_defrost(pending: dict | None, live_on: bool) -> bool | None:
+    if not pending:
+        return None
+    if live_on:
+        return None
+    created = parse_ts(pending.get("created_at"))
+    if created is not None:
+        age = (datetime.now(timezone.utc) - created).total_seconds()
+        if age >= PENDING_SETPOINT_TTL_SEC:
+            return None
+    return True
+
+
 def queued_power(pending: dict | None, live_on: bool) -> bool | None:
     if not pending:
         return None
@@ -1564,7 +1578,10 @@ def queued_setpoint(pending: dict | None, live_setpoint: Any) -> float | None:
 
 
 def decorate_instrument(
-    row: dict, pending: dict | None = None, pending_power_job: dict | None = None
+    row: dict,
+    pending: dict | None = None,
+    pending_power_job: dict | None = None,
+    pending_defrost_job: dict | None = None,
 ) -> dict:
     inst = dict(row)
     online = instrument_online(inst)
@@ -1588,6 +1605,8 @@ def decorate_instrument(
     pending_value = queued_setpoint(pending, setpoint)
     live_on = not bool(flags.get("standby"))
     pending_on = queued_power(pending_power_job, live_on)
+    live_defrost = bool(flags.get("defrost_active"))
+    pending_defrost = queued_defrost(pending_defrost_job, live_defrost)
     inst.update(
         {
             "name": display_name(inst.get("label"), inst.get("server_name"), inst.get("instrument_id") or 0),
@@ -1595,7 +1614,9 @@ def decorate_instrument(
             "cooling": flags["cooling"],
             "fan": flags["fan"],
             "humidity": flags["humidity"],
-            "defrost_active": flags["defrost_active"],
+            "defrost_active": live_defrost if pending_defrost is None else True,
+            "live_defrost": live_defrost,
+            "pending_defrost": pending_defrost,
             "alarm": bool(int(inst.get("alarm_active") or 0)),
             "alarm_pending": bool(inst.get("alarm_pending")),
             "alarm_label": "ON" if int(inst.get("alarm_active") or 0) else ("WAIT" if inst.get("alarm_pending") else "OFF"),
@@ -1613,7 +1634,7 @@ def decorate_instrument(
             "powered": live_on if pending_on is None else pending_on,
             "pending_power": pending_on,
             "cp1_label": "ON" if flags["cooling"] else "OFF",
-            "def1_label": "ON" if flags["defrost_active"] else "OFF",
+            "def1_label": "ON" if (live_defrost if pending_defrost is None else True) else "OFF",
             "fan_label": "ON" if flags["fan"] else "OFF",
             "temperature_label": format_temp(probe1),
             "defrost_label": format_temp(inst.get("last_probe2")),
@@ -1970,6 +1991,16 @@ async def job_result(job_id: int, request: Request) -> dict:
                 ),
                 (job["device_id"], job["instrument_id"]),
             )
+        elif ok and job.get("kind") == "defrost":
+            cur.execute(
+                q(
+                    """
+                    UPDATE instruments SET last_flags=COALESCE(last_flags, 0) | 16
+                    WHERE device_id=? AND instrument_id=?
+                    """
+                ),
+                (job["device_id"], job["instrument_id"]),
+            )
     return {"ok": True}
 
 
@@ -1988,17 +2019,20 @@ def dashboard_shell(request: Request | None = None) -> dict:
             """
             SELECT id, device_id, instrument_id, kind, display_value, status, created_at
             FROM jobs
-            WHERE status='pending' AND kind IN ('setpoint', 'power')
+            WHERE status='pending' AND kind IN ('setpoint', 'power', 'defrost')
             ORDER BY id ASC
             """
         )
         pending_jobs = fetchall(cur)
     pending_setpoints = {}
     pending_power = {}
+    pending_defrost = {}
     for job in pending_jobs:
         key = (job.get("device_id"), job.get("instrument_id"))
         if job.get("kind") == "power":
             pending_power[key] = job
+        elif job.get("kind") == "defrost":
+            pending_defrost[key] = job
         else:
             pending_setpoints[key] = job
     widgets = [
@@ -2006,6 +2040,7 @@ def dashboard_shell(request: Request | None = None) -> dict:
             inst,
             pending_setpoints.get((inst.get("device_id"), inst.get("instrument_id"))),
             pending_power.get((inst.get("device_id"), inst.get("instrument_id"))),
+            pending_defrost.get((inst.get("device_id"), inst.get("instrument_id"))),
         )
         for inst in instruments
     ]
@@ -2133,6 +2168,9 @@ def instruments_api(request: Request):
             "live_powered": w.get("live_powered"),
             "powered": w.get("powered"),
             "pending_power": w.get("pending_power"),
+            "live_defrost": w.get("live_defrost"),
+            "defrost_active": w.get("defrost_active"),
+            "pending_defrost": w.get("pending_defrost"),
         }
         for w in ctx["instruments"]
     ]
@@ -2943,6 +2981,27 @@ def set_power(
                 "queued": True,
                 "instrument_id": instrument_id,
                 "power": want_on,
+            }
+        )
+    return _redirect_next(next)
+
+
+@app.post("/defrost")
+def set_defrost(
+    request: Request,
+    instrument_id: int = Form(...),
+    device_id: str = Form(...),
+    next: str = Form(""),
+):
+    require_device_writable(request, device_id)
+    _queue_job(device_id, instrument_id, "defrost", POWER_REGISTER, DEFROST_MASK, 1)
+    if _wants_json(request):
+        return JSONResponse(
+            {
+                "ok": True,
+                "queued": True,
+                "instrument_id": instrument_id,
+                "defrost": True,
             }
         )
     return _redirect_next(next)

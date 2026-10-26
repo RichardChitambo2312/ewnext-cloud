@@ -41,6 +41,8 @@
                     <span class="switch-label">{% if inst.powered %}On{% else %}Off{% endif %}</span>
                   </label>
                 </form>
+                {% set defrost_next = inst.site_href %}
+                {% include "defrost_btn.html" %}
                 <span class="online-flag">
                   <span class="dot {% if inst.online %}dot-online{% else %}dot-offline{% endif %}"></span>
                   {{ "Online" if inst.online else "Offline" }}

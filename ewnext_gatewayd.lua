@@ -1,7 +1,7 @@
 #!/usr/bin/lua
 -- EWNext gateway worker. Reads UCI ewnext_gateway + /tmp/modbus_db.
 -- Publishes telemetry to the cloud and applies queued writes:
---   setpoint FC16 @ 32769, power FC16 @ 4123 (Ronon=4 / RoFFoFF=8).
+--   setpoint FC16 @ 32769, power FC16 @ 4123 (Ronon=4 / RoFFoFF=8 / Att_Sbr=4096).
 
 local sqlite = require("lsqlite3")
 local json = require("luci.jsonc")
@@ -236,7 +236,7 @@ local function collect_jobs(resp, into, seen)
         if type(job) == "table" then
             local id = tonumber(job.id)
             local kind = tostring(job.type or job.kind or ""):lower()
-            if id and not seen[id] and (kind == "setpoint" or kind == "power") then
+            if id and not seen[id] and (kind == "setpoint" or kind == "power" or kind == "defrost") then
                 seen[id] = true
                 into[#into + 1] = job
             end
@@ -255,7 +255,7 @@ local function apply_jobs(cfg, jobs)
         local kind = tostring(job.type or job.kind or ""):lower()
         local register = tonumber(job.register)
         local verify = true
-        if kind == "power" then
+        if kind == "power" or kind == "defrost" then
             register = register or POWER_REGISTER
             verify = false
         else

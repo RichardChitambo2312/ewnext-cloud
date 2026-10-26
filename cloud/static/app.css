@@ -306,6 +306,56 @@ button {
   margin-bottom: 20px;
 }
 
+.device-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.defrost-toggle {
+  margin: 0;
+}
+
+.defrost-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(249, 115, 22, 0.4);
+  background: #fff;
+  color: var(--defrost);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.defrost-btn svg {
+  flex: 0 0 auto;
+}
+
+.defrost-btn:hover:not(:disabled) {
+  background: var(--defrost-soft);
+}
+
+.defrost-btn.is-queued {
+  opacity: 0.7;
+}
+
+.defrost-btn.is-on {
+  background: var(--defrost);
+  border-color: var(--defrost);
+  color: #fff;
+}
+
+.defrost-btn:disabled {
+  cursor: default;
+}
+
 .page-head h1 {
   margin: 0;
   font-weight: 700;
@@ -389,6 +439,8 @@ button {
 .instrument-card .name-inline *,
 .instrument-card .power-toggle,
 .instrument-card .power-toggle *,
+.instrument-card .defrost-toggle,
+.instrument-card .defrost-toggle *,
 .instrument-card .alarm-history-card-link,
 .instrument-card .alarm-history-card-link *,
 .instrument-card .pen-btn {
@@ -430,6 +482,12 @@ button {
   flex-direction: column;
   align-items: flex-end;
   gap: 6px;
+}
+
+.instrument-card .defrost-btn {
+  min-height: 32px;
+  padding: 4px 10px;
+  font-size: 0.7rem;
 }
 
 .name-inline {
@@ -1784,6 +1842,7 @@ th {
 
 .device-locked .pen-btn,
 .device-locked .power-toggle,
+.device-locked .defrost-toggle,
 .device-locked .setpoint-inline,
 .device-locked .alarm-panel,
 .device-locked .name-inline {
