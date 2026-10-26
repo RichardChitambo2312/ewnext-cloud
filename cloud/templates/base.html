@@ -8,7 +8,7 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>{% block title %}Keyview Cloud{% endblock %}</title>
-  <link rel="stylesheet" href="/static/app.css?v=defrost1">
+  <link rel="stylesheet" href="/static/app.css?v=sp1">
   {% block extra_head %}{% endblock %}
 </head>
 <body>
@@ -368,6 +368,22 @@
       }
       var last = formatSetpoint(input.value);
       input.value = last;
+      lockField(input);
+      function beginEdit() {
+        if (input.hasAttribute("readonly")) {
+          if (pill) pill.classList.add("is-editing");
+          unlockField(input);
+        }
+      }
+      function endEdit() {
+        if (pill) pill.classList.remove("is-editing");
+        lockField(input);
+      }
+      if (pill) {
+        pill.addEventListener("click", beginEdit);
+      } else {
+        input.addEventListener("click", beginEdit);
+      }
       form.addEventListener("submit", function (event) {
         normalizeSetpointInput();
         if (!input.checkValidity() || input.value === "" || input.value === last) {
@@ -410,6 +426,7 @@
         if (event.key === "Escape") {
           event.preventDefault();
           input.value = last;
+          endEdit();
           input.blur();
           return;
         }
@@ -424,6 +441,7 @@
         input.value = formatSetpoint(typed);
         var next = input.value;
         last = next;
+        endEdit();
         input.blur();
         if (pill) pill.classList.add("is-queued");
         fetch("/setpoint", {
@@ -461,6 +479,7 @@
       });
       input.addEventListener("blur", function () {
         input.value = last;
+        endEdit();
       });
     });
     document.querySelectorAll(".alarm-form").forEach(function (form) {
