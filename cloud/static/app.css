@@ -1389,10 +1389,43 @@ th {
   gap: 10px;
 }
 
-.chart-export {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+.chart-download {
+  position: relative;
+}
+
+.chart-download-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 6;
+  min-width: 148px;
+  background: #fff;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  padding: 4px;
+}
+
+.chart-download-menu[hidden] {
+  display: none;
+}
+
+.chart-download-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.chart-download-menu button:hover {
+  background: var(--fog);
+  color: var(--nav);
 }
 
 .chart-export-btn {
@@ -2504,14 +2537,14 @@ th {
     align-items: stretch;
   }
 
-  .chart-export {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+  .chart-download-toggle,
+  .chart-zoom-reset {
+    width: 100%;
   }
 
-  .chart-export-btn {
-    padding: 8px 4px;
-    text-align: center;
+  .chart-download-menu {
+    left: 0;
+    right: 0;
   }
 
   .chart-wrap {

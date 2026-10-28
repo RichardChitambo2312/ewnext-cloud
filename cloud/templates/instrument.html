@@ -136,11 +136,14 @@
                 {% endfor %}
               </div>
               <button type="button" class="chart-export-btn chart-zoom-reset" hidden>Reset zoom</button>
-              <div class="chart-export" role="group" aria-label="Download chart">
-                <button type="button" class="chart-export-btn" data-format="pdf" disabled>PDF</button>
-                <button type="button" class="chart-export-btn" data-format="csv" disabled>CSV</button>
-                <button type="button" class="chart-export-btn" data-format="svg" disabled>SVG</button>
-                <button type="button" class="chart-export-btn" data-format="png" disabled>PNG</button>
+              <div class="chart-download">
+                <button type="button" class="chart-export-btn chart-download-toggle" aria-haspopup="menu" aria-expanded="false" aria-controls="chart-download-menu" disabled>Download</button>
+                <div class="chart-download-menu" id="chart-download-menu" role="menu" hidden>
+                  <button type="button" role="menuitem" data-format="pdf">PDF</button>
+                  <button type="button" role="menuitem" data-format="csv">CSV</button>
+                  <button type="button" role="menuitem" data-format="svg">SVG</button>
+                  <button type="button" role="menuitem" data-format="png">PNG</button>
+                </div>
               </div>
             </div>
           </div>
@@ -274,9 +277,9 @@
             function render(points) {
               currentPoints = points || [];
               var hasData = currentPoints.length > 0;
-              document.querySelectorAll(".chart-export-btn").forEach(function (btn) {
-                btn.disabled = !hasData;
-              });
+              var downloadToggle = document.querySelector(".chart-download-toggle");
+              if (downloadToggle) downloadToggle.disabled = !hasData;
+              if (!hasData) closeDownloadMenu();
               empty.hidden = !!hasData;
               if (legend) legend.hidden = !hasData;
               if (wrap) wrap.style.display = hasData ? "" : "none";
@@ -383,16 +386,18 @@
 
             function placeZoomBox(x0, y0, x1, y1) {
               var box = document.querySelector(".chart-zoom-box");
-              if (!box || !wrap) return;
+              if (!box || !wrap || !chart) return;
               var canvasRect = canvas.getBoundingClientRect();
               var wrapRect = wrap.getBoundingClientRect();
-              var left = Math.min(x0, x1) + (canvasRect.left - wrapRect.left);
-              var top = Math.min(y0, y1) + (canvasRect.top - wrapRect.top);
+              var sx = chart.width ? canvasRect.width / chart.width : 1;
+              var sy = chart.height ? canvasRect.height / chart.height : 1;
+              var left = Math.min(x0, x1) * sx + (canvasRect.left - wrapRect.left);
+              var top = Math.min(y0, y1) * sy + (canvasRect.top - wrapRect.top);
               box.hidden = false;
               box.style.left = left + "px";
               box.style.top = top + "px";
-              box.style.width = Math.abs(x1 - x0) + "px";
-              box.style.height = Math.abs(y1 - y0) + "px";
+              box.style.width = (Math.abs(x1 - x0) * sx) + "px";
+              box.style.height = (Math.abs(y1 - y0) * sy) + "px";
             }
 
             function resetZoom() {
@@ -720,9 +725,36 @@
               exportNote("");
             }
 
-            document.querySelectorAll(".chart-export-btn").forEach(function (btn) {
-              btn.addEventListener("click", function () {
-                if (!currentPoints.length || btn.disabled) return;
+            function closeDownloadMenu() {
+              var menu = document.getElementById("chart-download-menu");
+              var toggle = document.querySelector(".chart-download-toggle");
+              if (menu) menu.hidden = true;
+              if (toggle) toggle.setAttribute("aria-expanded", "false");
+            }
+
+            function openDownloadMenu() {
+              var menu = document.getElementById("chart-download-menu");
+              var toggle = document.querySelector(".chart-download-toggle");
+              if (!menu || !toggle || toggle.disabled) return;
+              menu.hidden = false;
+              toggle.setAttribute("aria-expanded", "true");
+            }
+
+            var downloadToggle = document.querySelector(".chart-download-toggle");
+            if (downloadToggle) {
+              downloadToggle.addEventListener("click", function (evt) {
+                evt.stopPropagation();
+                var menu = document.getElementById("chart-download-menu");
+                if (menu && !menu.hidden) closeDownloadMenu();
+                else openDownloadMenu();
+              });
+            }
+
+            document.querySelectorAll("#chart-download-menu button").forEach(function (btn) {
+              btn.addEventListener("click", function (evt) {
+                evt.stopPropagation();
+                closeDownloadMenu();
+                if (!currentPoints.length) return;
                 var format = btn.getAttribute("data-format");
                 if (format === "csv") exportCsv();
                 else if (format === "png") exportPng();
@@ -731,89 +763,135 @@
               });
             });
 
+            document.addEventListener("click", function (evt) {
+              var root = document.querySelector(".chart-download");
+              if (!root || root.contains(evt.target)) return;
+              closeDownloadMenu();
+            });
+            document.addEventListener("keydown", function (evt) {
+              if (evt.key === "Escape") closeDownloadMenu();
+            });
+
             var zoomDrag = null;
             var resetBtn = document.querySelector(".chart-zoom-reset");
             if (resetBtn) resetBtn.addEventListener("click", resetZoom);
 
-            function pointerOnPlot(evt) {
-              if (!chart || !chart.scales.y || !chart.scales.x) return null;
+            function chartPoint(evt) {
+              if (!chart || !chart.chartArea) return null;
               var rect = canvas.getBoundingClientRect();
-              var x = evt.clientX - rect.left;
-              var y = evt.clientY - rect.top;
-              var plot = chart.scales.y;
-              if (x < plot.left || x > plot.right || y < plot.top || y > plot.bottom) return null;
-              return { x: x, y: y };
+              if (!rect.width || !rect.height) return null;
+              var x = (evt.clientX - rect.left) * (chart.width / rect.width);
+              var y = (evt.clientY - rect.top) * (chart.height / rect.height);
+              var area = chart.chartArea;
+              if (x < area.left || x > area.right || y < area.top || y > area.bottom) return null;
+              return { x: x, y: y, rect: rect };
             }
 
             function clamp(value, low, high) {
               return Math.max(low, Math.min(high, value));
             }
 
-            canvas.addEventListener("pointerdown", function (evt) {
-              if (evt.button !== 0) return;
-              var point = pointerOnPlot(evt);
-              if (!point) return;
-              zoomDrag = { x0: point.x, y0: point.y, x1: point.x, y1: point.y, moved: false, id: evt.pointerId };
-              canvas.setPointerCapture(evt.pointerId);
-            });
+            function indexesBetween(scale, x0, x1) {
+              var lo = Math.min(x0, x1);
+              var hi = Math.max(x0, x1);
+              var first = null;
+              var last = null;
+              var nearestLo = 0;
+              var nearestHi = 0;
+              var distLo = Infinity;
+              var distHi = Infinity;
+              for (var i = 0; i < currentPoints.length; i++) {
+                var px = scale.getPixelForValue(i);
+                if (px >= lo && px <= hi) {
+                  if (first === null) first = i;
+                  last = i;
+                }
+                var dLo = Math.abs(px - lo);
+                var dHi = Math.abs(px - hi);
+                if (dLo < distLo) { distLo = dLo; nearestLo = i; }
+                if (dHi < distHi) { distHi = dHi; nearestHi = i; }
+              }
+              if (first === null) {
+                first = Math.min(nearestLo, nearestHi);
+                last = Math.max(nearestLo, nearestHi);
+              }
+              if (last <= first && currentPoints.length > 1) {
+                if (last < currentPoints.length - 1) last = first + 1;
+                else if (first > 0) first = last - 1;
+              }
+              return [first, last];
+            }
 
-            canvas.addEventListener("pointermove", function (evt) {
-              if (!zoomDrag || evt.pointerId !== zoomDrag.id) return;
+            function trackZoom(evt) {
+              if (!zoomDrag || evt.pointerId !== zoomDrag.id || !chart) return;
+              var point = chartPoint(evt);
               var rect = canvas.getBoundingClientRect();
-              var plot = chart && chart.scales.y;
-              if (!plot) return;
-              zoomDrag.x1 = clamp(evt.clientX - rect.left, plot.left, plot.right);
-              zoomDrag.y1 = clamp(evt.clientY - rect.top, plot.top, plot.bottom);
-              if (Math.abs(zoomDrag.x1 - zoomDrag.x0) > 4 || Math.abs(zoomDrag.y1 - zoomDrag.y0) > 4) {
+              var area = chart.chartArea;
+              var x = point ? point.x : clamp((evt.clientX - rect.left) * (chart.width / rect.width), area.left, area.right);
+              var y = point ? point.y : clamp((evt.clientY - rect.top) * (chart.height / rect.height), area.top, area.bottom);
+              zoomDrag.x1 = x;
+              zoomDrag.y1 = y;
+              if (Math.abs(zoomDrag.x1 - zoomDrag.x0) > 6 || Math.abs(zoomDrag.y1 - zoomDrag.y0) > 6) {
                 zoomDrag.moved = true;
                 placeZoomBox(zoomDrag.x0, zoomDrag.y0, zoomDrag.x1, zoomDrag.y1);
               }
-            });
+            }
 
             function finishZoom(evt) {
               if (!zoomDrag || (evt && evt.pointerId !== zoomDrag.id)) return;
               var drag = zoomDrag;
               zoomDrag = null;
               hideZoomBox();
-              if (!drag.moved || !chart) return;
-              var xScale = chart.scales.x;
-              var yScale = chart.scales.y;
+              if (!drag.moved || !chart || !chart.scales.x || !chart.scales.y) return;
               var xMin = Math.min(drag.x0, drag.x1);
               var xMax = Math.max(drag.x0, drag.x1);
               var yMinPx = Math.min(drag.y0, drag.y1);
               var yMaxPx = Math.max(drag.y0, drag.y1);
-              if (xMax - xMin < 12 || yMaxPx - yMinPx < 12) return;
-              var iStart = xScale.getValueForPixel(xMin);
-              var iEnd = xScale.getValueForPixel(xMax);
-              var vTop = yScale.getValueForPixel(yMinPx);
-              var vBottom = yScale.getValueForPixel(yMaxPx);
-              if (![iStart, iEnd, vTop, vBottom].every(function (n) { return typeof n === "number" && isFinite(n); })) return;
-              var i0 = clamp(Math.round(Math.min(iStart, iEnd)), 0, currentPoints.length - 1);
-              var i1 = clamp(Math.round(Math.max(iStart, iEnd)), 0, currentPoints.length - 1);
-              if (i1 <= i0) {
-                if (i1 < currentPoints.length - 1) i1 = i0 + 1;
-                else if (i0 > 0) i0 = i1 - 1;
-                else return;
+              if (xMax - xMin < 8 && yMaxPx - yMinPx < 8) return;
+              var span = indexesBetween(chart.scales.x, xMin, xMax);
+              if (span[0] == null || span[1] == null || span[1] <= span[0]) return;
+              chart.options.scales.x.min = span[0];
+              chart.options.scales.x.max = span[1];
+              var yScale = chart.scales.y;
+              var plotH = yScale.bottom - yScale.top;
+              var insideY = yMinPx >= yScale.top - 1 && yMaxPx <= yScale.bottom + 1;
+              var ySpan = yMaxPx - yMinPx;
+              if (insideY && ySpan >= 12 && ySpan <= plotH * 0.92) {
+                var vTop = yScale.getValueForPixel(yMinPx);
+                var vBottom = yScale.getValueForPixel(yMaxPx);
+                if (typeof vTop === "number" && typeof vBottom === "number" && isFinite(vTop) && isFinite(vBottom)) {
+                  var yLo = Math.min(vTop, vBottom);
+                  var yHi = Math.max(vTop, vBottom);
+                  if (yHi - yLo >= 0.05) {
+                    chart.options.scales.y.min = yLo;
+                    chart.options.scales.y.max = yHi;
+                  }
+                }
               }
-              var yLo = Math.min(vTop, vBottom);
-              var yHi = Math.max(vTop, vBottom);
-              if (yHi - yLo < 0.05) return;
-              chart.options.scales.x.min = i0;
-              chart.options.scales.x.max = i1;
-              chart.options.scales.y.min = yLo;
-              chart.options.scales.y.max = yHi;
               chart.update();
               setZoomed(true);
             }
 
+            canvas.addEventListener("pointerdown", function (evt) {
+              if (evt.button !== 0) return;
+              var point = chartPoint(evt);
+              if (!point) return;
+              closeDownloadMenu();
+              zoomDrag = { x0: point.x, y0: point.y, x1: point.x, y1: point.y, moved: false, id: evt.pointerId };
+              try { canvas.setPointerCapture(evt.pointerId); } catch (err) {}
+              evt.preventDefault();
+            });
+            canvas.addEventListener("pointermove", trackZoom);
+            window.addEventListener("pointermove", trackZoom);
             canvas.addEventListener("pointerup", finishZoom);
+            window.addEventListener("pointerup", finishZoom);
             canvas.addEventListener("pointercancel", function (evt) {
               if (!zoomDrag || evt.pointerId !== zoomDrag.id) return;
               zoomDrag = null;
               hideZoomBox();
             });
             canvas.addEventListener("dblclick", function (evt) {
-              if (!userZoom || !pointerOnPlot(evt)) return;
+              if (!userZoom || !chartPoint(evt)) return;
               evt.preventDefault();
               resetZoom();
             });
