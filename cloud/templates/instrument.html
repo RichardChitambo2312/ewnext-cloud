@@ -2,6 +2,7 @@
 {% block title %}{{ inst.name }} — Keyview Cloud{% endblock %}
 {% block extra_head %}
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
 {% endblock %}
 {% block content %}
         <div class="page-head">
@@ -125,18 +126,30 @@
           </form>
         </section>
 
-        <section class="chart-panel" data-instrument-id="{{ inst.instrument_id }}" data-device-id="{{ inst.device_id }}" data-range="{{ range_key }}">
+        <section class="chart-panel" data-instrument-id="{{ inst.instrument_id }}" data-device-id="{{ inst.device_id }}" data-name="{{ inst.name }}" data-range="{{ range_key }}">
           <div class="chart-toolbar">
             <h2>Trend</h2>
-            <div class="range-tabs" role="tablist" aria-label="Chart range">
-              {% for key, label in ranges %}
-              <button type="button" class="range-tab{% if key == range_key %} is-active{% endif %}" data-range="{{ key }}">{{ label }}</button>
-              {% endfor %}
+            <div class="chart-toolbar-actions">
+              <div class="range-tabs" role="tablist" aria-label="Chart range">
+                {% for key, label in ranges %}
+                <button type="button" class="range-tab{% if key == range_key %} is-active{% endif %}" data-range="{{ key }}">{{ label }}</button>
+                {% endfor %}
+              </div>
+              <button type="button" class="chart-export-btn chart-zoom-reset" hidden>Reset zoom</button>
+              <div class="chart-export" role="group" aria-label="Download chart">
+                <button type="button" class="chart-export-btn" data-format="pdf" disabled>PDF</button>
+                <button type="button" class="chart-export-btn" data-format="csv" disabled>CSV</button>
+                <button type="button" class="chart-export-btn" data-format="svg" disabled>SVG</button>
+                <button type="button" class="chart-export-btn" data-format="png" disabled>PNG</button>
+              </div>
             </div>
           </div>
+          <p class="chart-zoom-hint">Drag across the trend to zoom into that section.</p>
+          <p class="chart-export-note" hidden></p>
           <p class="chart-empty" hidden>No readings in this range yet.</p>
           <div class="chart-wrap">
             <canvas id="instrument-chart" aria-label="Temperature, defrost, setpoint and status"></canvas>
+            <div class="chart-zoom-box" hidden></div>
           </div>
           <div class="chart-status-legend" aria-label="Status history key">
             <span class="legend-key key-cool">Cooling</span>
@@ -154,6 +167,8 @@
             var legend = document.querySelector(".chart-status-legend");
             var wrap = document.querySelector(".chart-wrap");
             var chart = null;
+            var currentPoints = [];
+            var userZoom = false;
             var colors = {
               temp: "#2980b9",
               defrost: "#f97316",
@@ -227,6 +242,9 @@
                 var laneGap = 3;
                 var laneH = Math.max(5, (height - laneGap * (statusLanes.length - 1)) / statusLanes.length);
                 ctx.save();
+                ctx.beginPath();
+                ctx.rect(left, yStatus.top, Math.max(0, right - left), Math.max(0, yStatus.bottom - yStatus.top));
+                ctx.clip();
                 ctx.fillStyle = "rgba(241,245,249,0.95)";
                 roundRect(ctx, left, yStatus.top + 2, right - left, Math.max(20, yStatus.bottom - yStatus.top - 4), 8);
                 ctx.fill();
@@ -254,13 +272,18 @@
             };
 
             function render(points) {
-              var hasData = points && points.length;
+              currentPoints = points || [];
+              var hasData = currentPoints.length > 0;
+              document.querySelectorAll(".chart-export-btn").forEach(function (btn) {
+                btn.disabled = !hasData;
+              });
               empty.hidden = !!hasData;
               if (legend) legend.hidden = !hasData;
               if (wrap) wrap.style.display = hasData ? "" : "none";
               canvas.style.display = hasData ? "block" : "none";
               if (!hasData) {
                 if (chart) { chart.destroy(); chart = null; }
+                setZoomed(false);
                 return;
               }
               var labels = points.map(function (p) { return fmtTick(p.t); });
@@ -341,7 +364,459 @@
               chart = new Chart(canvas, { type: "line", data: data, options: options, plugins: [statusRibbon] });
               chart.$statusPoints = points;
               chart.update("none");
+              setZoomed(false);
             }
+
+            function setZoomed(on) {
+              userZoom = !!on;
+              var btn = document.querySelector(".chart-zoom-reset");
+              if (btn) btn.hidden = !userZoom;
+            }
+
+            function hideZoomBox() {
+              var box = document.querySelector(".chart-zoom-box");
+              if (!box) return;
+              box.hidden = true;
+              box.style.width = "0px";
+              box.style.height = "0px";
+            }
+
+            function placeZoomBox(x0, y0, x1, y1) {
+              var box = document.querySelector(".chart-zoom-box");
+              if (!box || !wrap) return;
+              var canvasRect = canvas.getBoundingClientRect();
+              var wrapRect = wrap.getBoundingClientRect();
+              var left = Math.min(x0, x1) + (canvasRect.left - wrapRect.left);
+              var top = Math.min(y0, y1) + (canvasRect.top - wrapRect.top);
+              box.hidden = false;
+              box.style.left = left + "px";
+              box.style.top = top + "px";
+              box.style.width = Math.abs(x1 - x0) + "px";
+              box.style.height = Math.abs(y1 - y0) + "px";
+            }
+
+            function resetZoom() {
+              hideZoomBox();
+              if (!chart) {
+                setZoomed(false);
+                return;
+              }
+              chart.options.scales.x.min = undefined;
+              chart.options.scales.x.max = undefined;
+              chart.options.scales.y.min = undefined;
+              chart.options.scales.y.max = undefined;
+              chart.update();
+              setZoomed(false);
+            }
+
+            function viewSlice() {
+              if (!chart || !currentPoints.length || !userZoom) {
+                return { points: currentPoints.slice(), yMin: null, yMax: null };
+              }
+              var x = chart.scales.x;
+              var y = chart.scales.y;
+              var i0 = Math.max(0, Math.floor(Number(x.min)));
+              var i1 = Math.min(currentPoints.length - 1, Math.ceil(Number(x.max)));
+              if (!isFinite(i0) || !isFinite(i1) || i1 < i0) {
+                return { points: currentPoints.slice(), yMin: null, yMax: null };
+              }
+              return {
+                points: currentPoints.slice(i0, i1 + 1),
+                yMin: Number(y.min),
+                yMax: Number(y.max)
+              };
+            }
+
+            function exportNote(msg) {
+              var el = document.querySelector(".chart-export-note");
+              if (!el) return;
+              el.hidden = !msg;
+              el.textContent = msg || "";
+            }
+
+            function rangeLabel() {
+              var active = document.querySelector(".range-tab.is-active");
+              return active ? active.textContent.trim() : (panel.dataset.range || "");
+            }
+
+            function chartSubtitle() {
+              return "Device " + (panel.dataset.deviceId || "")
+                + " · Address " + (panel.dataset.instrumentId || "")
+                + " · " + rangeLabel()
+                + (userZoom ? " · zoomed" : "");
+            }
+
+            function fileBase() {
+              function slug(value) {
+                return String(value || "chart").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "") || "chart";
+              }
+              var stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "");
+              return [
+                slug(panel.dataset.name),
+                slug(panel.dataset.deviceId),
+                slug(panel.dataset.instrumentId),
+                slug(panel.dataset.range),
+                stamp
+              ].join("-");
+            }
+
+            function downloadBlob(blob, name) {
+              var a = document.createElement("a");
+              var url = URL.createObjectURL(blob);
+              a.href = url;
+              a.download = name;
+              document.body.appendChild(a);
+              a.click();
+              a.remove();
+              setTimeout(function () { URL.revokeObjectURL(url); }, 1500);
+            }
+
+            function xmlEscape(value) {
+              return String(value == null ? "" : value).replace(/[&<>"]/g, function (ch) {
+                return { "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[ch];
+              });
+            }
+
+            function csvCell(value) {
+              if (value == null || value === "") return "";
+              var text = String(value);
+              if (/[",\n]/.test(text)) return "\"" + text.replace(/"/g, "\"\"") + "\"";
+              return text;
+            }
+
+            function csvNumber(value) {
+              if (value == null || value === "" || isNaN(Number(value))) return "";
+              return String(Number(value));
+            }
+
+            function exportCsv() {
+              var lines = ["time_utc,temperature_c,defrost_temp_c,setpoint_c,cooling,defrost,fan,alarm"];
+              viewSlice().points.forEach(function (point) {
+                lines.push([
+                  csvCell(point.t),
+                  csvNumber(point.temp),
+                  csvNumber(point.defrost),
+                  csvNumber(point.setpoint),
+                  point.cooling ? "1" : "0",
+                  point.defrost_on ? "1" : "0",
+                  point.fan ? "1" : "0",
+                  point.alarm ? "1" : "0"
+                ].join(","));
+              });
+              downloadBlob(new Blob(["\uFEFF" + lines.join("\n")], { type: "text/csv;charset=utf-8" }), fileBase() + ".csv");
+              exportNote("");
+            }
+
+            function chartSnapshot() {
+              if (!chart) return null;
+              var src = chart.canvas;
+              var dpr = src.width / (src.clientWidth || src.width || 1);
+              var pad = Math.round(16 * dpr);
+              var titleH = Math.round(58 * dpr);
+              var legendH = Math.round(36 * dpr);
+              var out = document.createElement("canvas");
+              out.width = src.width + pad * 2;
+              out.height = src.height + titleH + legendH + pad;
+              var ctx = out.getContext("2d");
+              ctx.fillStyle = "#ffffff";
+              ctx.fillRect(0, 0, out.width, out.height);
+              ctx.fillStyle = "#0f172a";
+              ctx.font = "600 " + Math.round(16 * dpr) + "px Segoe UI, sans-serif";
+              ctx.fillText(panel.dataset.name || "Trend", pad, Math.round(28 * dpr));
+              ctx.fillStyle = "#64748b";
+              ctx.font = Math.round(12 * dpr) + "px Segoe UI, sans-serif";
+              ctx.fillText(chartSubtitle(), pad, Math.round(48 * dpr));
+              ctx.drawImage(src, pad, titleH);
+              var keys = [
+                { label: "Cooling", color: colors.cooling },
+                { label: "Fan", color: colors.fan },
+                { label: "Defrost", color: colors.defrostOn },
+                { label: "Alarm", color: colors.alarm }
+              ];
+              var x = pad;
+              var y = titleH + src.height + Math.round(8 * dpr);
+              ctx.font = Math.round(12 * dpr) + "px Segoe UI, sans-serif";
+              keys.forEach(function (key) {
+                ctx.fillStyle = key.color;
+                ctx.beginPath();
+                ctx.arc(x + Math.round(6 * dpr), y + Math.round(6 * dpr), Math.round(5 * dpr), 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = "#475569";
+                ctx.fillText(key.label, x + Math.round(16 * dpr), y + Math.round(10 * dpr));
+                x += ctx.measureText(key.label).width + Math.round(36 * dpr);
+              });
+              return out;
+            }
+
+            function exportPng() {
+              var snap = chartSnapshot();
+              if (!snap) return;
+              snap.toBlob(function (blob) {
+                if (!blob) {
+                  exportNote("Could not build the PNG.");
+                  return;
+                }
+                downloadBlob(blob, fileBase() + ".png");
+                exportNote("");
+              }, "image/png");
+            }
+
+            function exportPdf() {
+              var snap = chartSnapshot();
+              var Pdf = window.jspdf && window.jspdf.jsPDF;
+              if (!snap || !Pdf) {
+                exportNote("Could not build the PDF. Refresh and try again.");
+                return;
+              }
+              try {
+                var pdf = new Pdf({ orientation: "landscape", unit: "mm", format: "a4" });
+                var pageW = pdf.internal.pageSize.getWidth();
+                var pageH = pdf.internal.pageSize.getHeight();
+                var margin = 8;
+                var maxW = pageW - margin * 2;
+                var maxH = pageH - margin * 2;
+                var ratio = snap.width / snap.height;
+                var w = maxW;
+                var h = w / ratio;
+                if (h > maxH) {
+                  h = maxH;
+                  w = h * ratio;
+                }
+                pdf.addImage(snap.toDataURL("image/png"), "PNG", (pageW - w) / 2, (pageH - h) / 2, w, h);
+                pdf.save(fileBase() + ".pdf");
+                exportNote("");
+              } catch (err) {
+                exportNote("Could not build the PDF.");
+              }
+            }
+
+            function exportSvg() {
+              var slice = viewSlice();
+              var pts = slice.points;
+              if (!pts.length) return;
+              var width = 1100;
+              var height = 640;
+              var left = 72;
+              var right = 28;
+              var top = 92;
+              var bottom = 56;
+              var plotW = width - left - right;
+              var statusH = 96;
+              var gap = 18;
+              var plotBottom = height - bottom;
+              var statusTop = plotBottom - statusH;
+              var plotH = statusTop - gap - top;
+              var values = [];
+              pts.forEach(function (point) {
+                ["temp", "defrost", "setpoint"].forEach(function (key) {
+                  if (point[key] != null && !isNaN(Number(point[key]))) values.push(Number(point[key]));
+                });
+              });
+              var min = values.length ? Math.min.apply(null, values) : 0;
+              var max = values.length ? Math.max.apply(null, values) : 1;
+              if (slice.yMin != null && slice.yMax != null && isFinite(slice.yMin) && isFinite(slice.yMax) && slice.yMax > slice.yMin) {
+                min = slice.yMin;
+                max = slice.yMax;
+              } else {
+                if (min === max) {
+                  min -= 1;
+                  max += 1;
+                }
+                var padY = (max - min) * 0.08;
+                min -= padY;
+                max += padY;
+              }
+
+              function xAt(index) {
+                if (pts.length <= 1) return left + plotW / 2;
+                return left + (index / (pts.length - 1)) * plotW;
+              }
+              function yAt(value) {
+                return top + (1 - (value - min) / (max - min)) * plotH;
+              }
+              function pathFor(key) {
+                var d = "";
+                var drawing = false;
+                for (var i = 0; i < pts.length; i++) {
+                  var value = pts[i][key];
+                  if (value == null || isNaN(Number(value))) {
+                    drawing = false;
+                    continue;
+                  }
+                  d += (drawing ? "L" : "M") + xAt(i).toFixed(1) + " " + yAt(Number(value)).toFixed(1) + " ";
+                  drawing = true;
+                }
+                return d.trim();
+              }
+
+              var grid = "";
+              for (var tick = 0; tick <= 4; tick++) {
+                var value = min + (max - min) * (tick / 4);
+                var y = yAt(value);
+                grid += "<line x1=\"" + left + "\" y1=\"" + y.toFixed(1) + "\" x2=\"" + (left + plotW) + "\" y2=\"" + y.toFixed(1) + "\" stroke=\"#e2e6ec\"/>";
+                grid += "<text x=\"" + (left - 10) + "\" y=\"" + (y + 4).toFixed(1) + "\" text-anchor=\"end\" font-size=\"12\" fill=\"#7a8494\">" + value.toFixed(1) + "</text>";
+              }
+
+              var xLabels = "";
+              var tickCount = Math.min(6, pts.length);
+              for (var i = 0; i < tickCount; i++) {
+                var index = tickCount === 1 ? 0 : Math.round(i * (pts.length - 1) / (tickCount - 1));
+                xLabels += "<text x=\"" + xAt(index).toFixed(1) + "\" y=\"" + (plotBottom + 20) + "\" text-anchor=\"middle\" font-size=\"11\" fill=\"#7a8494\">" + xmlEscape(fmtTick(pts[index].t)) + "</text>";
+              }
+
+              var laneGap = 4;
+              var laneH = (statusH - 10 - laneGap * (statusLanes.length - 1)) / statusLanes.length;
+              var lanes = "<rect x=\"" + left + "\" y=\"" + statusTop + "\" width=\"" + plotW + "\" height=\"" + statusH + "\" rx=\"8\" fill=\"#f8fafc\" stroke=\"#e2e8f0\"/>";
+              statusLanes.forEach(function (lane, laneIndex) {
+                var y = statusTop + 5 + laneIndex * (laneH + laneGap);
+                lanes += "<rect x=\"" + left + "\" y=\"" + y.toFixed(1) + "\" width=\"" + plotW + "\" height=\"" + laneH.toFixed(1) + "\" rx=\"3\" fill=\"#e2e8f0\"/>";
+                runs(pts, lane.key).forEach(function (span) {
+                  var x0 = xAt(span[0]);
+                  var x1 = xAt(span[1]);
+                  lanes += "<rect x=\"" + Math.min(x0, x1).toFixed(1) + "\" y=\"" + y.toFixed(1) + "\" width=\"" + Math.max(3, Math.abs(x1 - x0)).toFixed(1) + "\" height=\"" + laneH.toFixed(1) + "\" rx=\"3\" fill=\"" + lane.color + "\"/>";
+                });
+              });
+
+              var legendItems = [
+                { label: "Temperature", color: colors.temp, dash: false },
+                { label: "Defrost temp", color: colors.defrost, dash: false },
+                { label: "Setpoint", color: colors.setpoint, dash: true }
+              ];
+              var legend = "";
+              var legendX = left;
+              legendItems.forEach(function (item) {
+                legend += "<line x1=\"" + legendX + "\" y1=\"70\" x2=\"" + (legendX + 18) + "\" y2=\"70\" stroke=\"" + item.color + "\" stroke-width=\"3\"" + (item.dash ? " stroke-dasharray=\"5 4\"" : "") + "/>";
+                legend += "<text x=\"" + (legendX + 24) + "\" y=\"74\" font-size=\"12\" fill=\"#334155\">" + xmlEscape(item.label) + "</text>";
+                legendX += 24 + item.label.length * 7.2 + 16;
+              });
+              [
+                { label: "Cooling", color: colors.cooling },
+                { label: "Fan", color: colors.fan },
+                { label: "Defrost", color: colors.defrostOn },
+                { label: "Alarm", color: colors.alarm }
+              ].forEach(function (item) {
+                legend += "<circle cx=\"" + (legendX + 6) + "\" cy=\"70\" r=\"5\" fill=\"" + item.color + "\"/>";
+                legend += "<text x=\"" + (legendX + 16) + "\" y=\"74\" font-size=\"12\" fill=\"#334155\">" + xmlEscape(item.label) + "</text>";
+                legendX += 16 + item.label.length * 7.2 + 16;
+              });
+
+              var svg = [
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" + width + "\" height=\"" + height + "\" viewBox=\"0 0 " + width + " " + height + "\" font-family=\"Segoe UI, Arial, sans-serif\">",
+                "<rect width=\"100%\" height=\"100%\" fill=\"#ffffff\"/>",
+                "<text x=\"" + left + "\" y=\"28\" font-size=\"18\" font-weight=\"600\" fill=\"#0f172a\">" + xmlEscape(panel.dataset.name || "Trend") + "</text>",
+                "<text x=\"" + left + "\" y=\"48\" font-size=\"12\" fill=\"#64748b\">" + xmlEscape(chartSubtitle()) + "</text>",
+                legend,
+                grid,
+                "<text x=\"18\" y=\"" + (top + plotH / 2) + "\" font-size=\"12\" fill=\"#7a8494\" transform=\"rotate(-90 18 " + (top + plotH / 2) + ")\">°C</text>",
+                "<path d=\"" + pathFor("temp") + "\" fill=\"none\" stroke=\"" + colors.temp + "\" stroke-width=\"2\"/>",
+                "<path d=\"" + pathFor("defrost") + "\" fill=\"none\" stroke=\"" + colors.defrost + "\" stroke-width=\"2\"/>",
+                "<path d=\"" + pathFor("setpoint") + "\" fill=\"none\" stroke=\"" + colors.setpoint + "\" stroke-width=\"2\" stroke-dasharray=\"5 4\"/>",
+                lanes,
+                xLabels,
+                "</svg>"
+              ].join("");
+              downloadBlob(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }), fileBase() + ".svg");
+              exportNote("");
+            }
+
+            document.querySelectorAll(".chart-export-btn").forEach(function (btn) {
+              btn.addEventListener("click", function () {
+                if (!currentPoints.length || btn.disabled) return;
+                var format = btn.getAttribute("data-format");
+                if (format === "csv") exportCsv();
+                else if (format === "png") exportPng();
+                else if (format === "svg") exportSvg();
+                else if (format === "pdf") exportPdf();
+              });
+            });
+
+            var zoomDrag = null;
+            var resetBtn = document.querySelector(".chart-zoom-reset");
+            if (resetBtn) resetBtn.addEventListener("click", resetZoom);
+
+            function pointerOnPlot(evt) {
+              if (!chart || !chart.scales.y || !chart.scales.x) return null;
+              var rect = canvas.getBoundingClientRect();
+              var x = evt.clientX - rect.left;
+              var y = evt.clientY - rect.top;
+              var plot = chart.scales.y;
+              if (x < plot.left || x > plot.right || y < plot.top || y > plot.bottom) return null;
+              return { x: x, y: y };
+            }
+
+            function clamp(value, low, high) {
+              return Math.max(low, Math.min(high, value));
+            }
+
+            canvas.addEventListener("pointerdown", function (evt) {
+              if (evt.button !== 0) return;
+              var point = pointerOnPlot(evt);
+              if (!point) return;
+              zoomDrag = { x0: point.x, y0: point.y, x1: point.x, y1: point.y, moved: false, id: evt.pointerId };
+              canvas.setPointerCapture(evt.pointerId);
+            });
+
+            canvas.addEventListener("pointermove", function (evt) {
+              if (!zoomDrag || evt.pointerId !== zoomDrag.id) return;
+              var rect = canvas.getBoundingClientRect();
+              var plot = chart && chart.scales.y;
+              if (!plot) return;
+              zoomDrag.x1 = clamp(evt.clientX - rect.left, plot.left, plot.right);
+              zoomDrag.y1 = clamp(evt.clientY - rect.top, plot.top, plot.bottom);
+              if (Math.abs(zoomDrag.x1 - zoomDrag.x0) > 4 || Math.abs(zoomDrag.y1 - zoomDrag.y0) > 4) {
+                zoomDrag.moved = true;
+                placeZoomBox(zoomDrag.x0, zoomDrag.y0, zoomDrag.x1, zoomDrag.y1);
+              }
+            });
+
+            function finishZoom(evt) {
+              if (!zoomDrag || (evt && evt.pointerId !== zoomDrag.id)) return;
+              var drag = zoomDrag;
+              zoomDrag = null;
+              hideZoomBox();
+              if (!drag.moved || !chart) return;
+              var xScale = chart.scales.x;
+              var yScale = chart.scales.y;
+              var xMin = Math.min(drag.x0, drag.x1);
+              var xMax = Math.max(drag.x0, drag.x1);
+              var yMinPx = Math.min(drag.y0, drag.y1);
+              var yMaxPx = Math.max(drag.y0, drag.y1);
+              if (xMax - xMin < 12 || yMaxPx - yMinPx < 12) return;
+              var iStart = xScale.getValueForPixel(xMin);
+              var iEnd = xScale.getValueForPixel(xMax);
+              var vTop = yScale.getValueForPixel(yMinPx);
+              var vBottom = yScale.getValueForPixel(yMaxPx);
+              if (![iStart, iEnd, vTop, vBottom].every(function (n) { return typeof n === "number" && isFinite(n); })) return;
+              var i0 = clamp(Math.round(Math.min(iStart, iEnd)), 0, currentPoints.length - 1);
+              var i1 = clamp(Math.round(Math.max(iStart, iEnd)), 0, currentPoints.length - 1);
+              if (i1 <= i0) {
+                if (i1 < currentPoints.length - 1) i1 = i0 + 1;
+                else if (i0 > 0) i0 = i1 - 1;
+                else return;
+              }
+              var yLo = Math.min(vTop, vBottom);
+              var yHi = Math.max(vTop, vBottom);
+              if (yHi - yLo < 0.05) return;
+              chart.options.scales.x.min = i0;
+              chart.options.scales.x.max = i1;
+              chart.options.scales.y.min = yLo;
+              chart.options.scales.y.max = yHi;
+              chart.update();
+              setZoomed(true);
+            }
+
+            canvas.addEventListener("pointerup", finishZoom);
+            canvas.addEventListener("pointercancel", function (evt) {
+              if (!zoomDrag || evt.pointerId !== zoomDrag.id) return;
+              zoomDrag = null;
+              hideZoomBox();
+            });
+            canvas.addEventListener("dblclick", function (evt) {
+              if (!userZoom || !pointerOnPlot(evt)) return;
+              evt.preventDefault();
+              resetZoom();
+            });
 
             function loadRange(rangeKey) {
               var url = "/api/instruments/" + encodeURIComponent(panel.dataset.instrumentId)

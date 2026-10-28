@@ -1381,6 +1381,58 @@ th {
   font-size: 1rem;
 }
 
+.chart-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.chart-export {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chart-export-btn {
+  border: 1px solid var(--line-strong);
+  background: #fff;
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.chart-export-btn:hover:not(:disabled) {
+  border-color: var(--nav);
+  color: var(--nav);
+}
+
+.chart-export-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.chart-export-note {
+  margin: 0 0 8px;
+  color: var(--alarm);
+  font-size: 0.8rem;
+}
+
+.chart-zoom-hint {
+  margin: -4px 0 10px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.chart-zoom-reset[hidden],
+.chart-zoom-box[hidden] {
+  display: none;
+}
+
 .range-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -1404,7 +1456,22 @@ th {
 }
 
 .chart-wrap {
+  position: relative;
   height: 500px;
+  touch-action: none;
+  user-select: none;
+}
+
+.chart-wrap canvas {
+  cursor: crosshair;
+}
+
+.chart-zoom-box {
+  position: absolute;
+  border: 1px solid #2980b9;
+  background: rgba(41, 128, 185, 0.18);
+  pointer-events: none;
+  z-index: 2;
 }
 
 .chart-status-legend {
@@ -2429,6 +2496,21 @@ th {
   .range-tab {
     padding: 8px 4px;
     font-size: 0.72rem;
+    text-align: center;
+  }
+
+  .chart-toolbar-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .chart-export {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .chart-export-btn {
+    padding: 8px 4px;
     text-align: center;
   }
 
