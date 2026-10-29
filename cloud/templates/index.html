@@ -27,7 +27,7 @@
           </header>
           <div class="instrument-grid" aria-label="Instruments at {{ site.device_id }}">
             {% for inst in site.instruments %}
-            <article class="instrument-card{% if inst.alarm %} status-alarm{% endif %}">
+            <article class="instrument-card{% if not inst.online %} is-offline{% elif inst.alarm %} status-alarm{% endif %}">
               <a class="instrument-card-hit" href="{{ inst.href }}" aria-label="Open {{ inst.name }}"></a>
               <header class="instrument-card-head">
                 <div class="instrument-card-id">

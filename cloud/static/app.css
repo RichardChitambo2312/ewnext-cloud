@@ -778,6 +778,56 @@ button {
   color: #b45309;
 }
 
+.instrument-card.is-offline .status-chip,
+.instrument-card.is-offline .status-chip.is-on,
+.instrument-card.is-offline .status-chip.is-wait,
+body.is-offline .status-chip,
+body.is-offline .status-chip.is-on,
+body.is-offline .status-chip.is-wait {
+  background: #eef1f4;
+  border-color: #d5dbe3;
+  color: var(--offline);
+}
+
+.instrument-card.is-offline .si,
+.instrument-card.is-offline .si.is-on,
+.instrument-card.is-offline .si.is-wait,
+body.is-offline .si,
+body.is-offline .si.is-on,
+body.is-offline .si.is-wait {
+  background-color: var(--offline);
+  animation: none;
+}
+
+.instrument-card.is-offline .pill,
+body.is-offline .detail-metrics .pill,
+body.is-offline .pill {
+  color: var(--offline);
+  background: #eef1f4;
+  border-color: #d5dbe3;
+}
+
+.instrument-card.is-offline .power-input:checked + .switch-ui,
+body.is-offline .power-input:checked + .switch-ui {
+  background: var(--offline);
+}
+
+.instrument-card.is-offline .power-input:checked ~ .switch-label,
+body.is-offline .power-input:checked ~ .switch-label {
+  color: var(--offline);
+}
+
+.instrument-card.is-offline .defrost-btn,
+.instrument-card.is-offline .defrost-btn.is-on,
+.instrument-card.is-offline .defrost-btn.is-queued,
+body.is-offline .defrost-btn,
+body.is-offline .defrost-btn.is-on,
+body.is-offline .defrost-btn.is-queued {
+  color: var(--offline);
+  background: #eef1f4;
+  border-color: #d5dbe3;
+}
+
 .si {
   width: 24px;
   height: 24px;

@@ -11,10 +11,10 @@
   <title>{% block title %}Keyview Cloud{% endblock %}</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/static/brand/icon-180.png">
-  <link rel="stylesheet" href="/static/app.css?v=push1">
+  <link rel="stylesheet" href="/static/app.css?v=offline1">
   {% block extra_head %}{% endblock %}
 </head>
-<body data-push="1">
+<body data-push="1"{% if inst is defined and not inst.online %} class="is-offline"{% endif %}>
   <div class="shell">
     <header class="mobile-bar">
       {% if back_href %}
@@ -553,12 +553,12 @@
         }
       });
     });
-    {% if page != "instrument" and request.method == "GET" %}
+    {% if request.method == "GET" %}
     setTimeout(function () {
       var banner = document.getElementById("push-banner");
       if (banner && !banner.hidden) return;
       var el = document.activeElement;
-      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT")) return;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") && !el.readOnly && !el.disabled) return;
       location.reload();
     }, 20000);
     {% endif %}
