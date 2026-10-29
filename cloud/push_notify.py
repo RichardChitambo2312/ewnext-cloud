@@ -47,6 +47,22 @@ def enqueue(device_id: str, title: str, body: str, url: str, tag: str) -> None:
     )
 
 
+def enqueue_direct(endpoint: str, p256dh: str, auth: str, title: str, body: str, url: str, tag: str) -> None:
+    _events.put(
+        {
+            "direct": "1",
+            "endpoint": endpoint,
+            "p256dh": p256dh,
+            "auth": auth,
+            "device_id": "",
+            "title": title,
+            "body": body,
+            "url": url or "/",
+            "tag": tag or "keyview",
+        }
+    )
+
+
 def start() -> None:
     global _started
     with _lock:
@@ -123,43 +139,86 @@ def _send_loop() -> None:
         time.sleep(0.4)
         try:
             _deliver(item)
-        except Exception:
-            continue
+        except Exception as exc:
+            print(f"push loop {type(exc).__name__}", flush=True)
 
 
-def _deliver(item: dict[str, str]) -> None:
+def deliver_one(endpoint: str, p256dh: str, auth: str, title: str, body: str, url: str, tag: str) -> str:
+    """Send one alert. Returns ok, gone, fail, keys, library, or error. Never logs the endpoint."""
     try:
         from py_vapid import Vapid
         from pywebpush import WebPushException, webpush
-    except Exception:
+    except Exception as exc:
+        print(f"push library {type(exc).__name__}", flush=True)
+        return "library"
+    try:
+        _public, private = _keys()
+        vapid = Vapid.from_pem(private.encode("ascii"))
+    except Exception as exc:
+        print(f"push keys {type(exc).__name__}", flush=True)
+        return "keys"
+    try:
+        response = webpush(
+            subscription_info={
+                "endpoint": endpoint,
+                "keys": {"p256dh": p256dh, "auth": auth},
+            },
+            data=json.dumps(
+                {"title": title, "body": body, "url": url or "/", "tag": tag or "keyview"},
+                separators=(",", ":"),
+            ),
+            vapid_private_key=vapid,
+            vapid_claims={"sub": "mailto:alerts@ewnext-cloud.onrender.com"},
+            ttl=86400,
+            timeout=12,
+            headers={"Urgency": "high"},
+        )
+        status = getattr(response, "status_code", 0)
+        print(f"push ok {status} {title}", flush=True)
+        return "ok"
+    except WebPushException as exc:
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None)
+        print(f"push fail {status} {title}", flush=True)
+        if status in (404, 410):
+            _drop_endpoint(endpoint)
+            return "gone"
+        return "fail"
+    except Exception as exc:
+        print(f"push error {type(exc).__name__} {title}", flush=True)
+        return "error"
+
+
+def _deliver(item: dict[str, str]) -> None:
+    if item.get("direct") == "1":
+        deliver_one(
+            item.get("endpoint") or "",
+            item.get("p256dh") or "",
+            item.get("auth") or "",
+            item["title"],
+            item["body"],
+            item["url"],
+            item["tag"],
+        )
         return
-    public, private = _keys()
-    vapid = Vapid.from_pem(private.encode("ascii"))
-    payload = json.dumps(
-        {"title": item["title"], "body": item["body"], "url": item["url"], "tag": item["tag"]},
-        separators=(",", ":"),
-    )
-    for sub in _recipients(item["device_id"]):
-        try:
-            webpush(
-                subscription_info={
-                    "endpoint": sub["endpoint"],
-                    "keys": {"p256dh": sub["p256dh"], "auth": sub["auth"]},
-                },
-                data=payload,
-                vapid_private_key=vapid,
-                vapid_claims={"sub": "mailto:alerts@ewnext-cloud.onrender.com"},
-                ttl=86400,
-                timeout=8,
-            )
-        except WebPushException as exc:
-            response = getattr(exc, "response", None)
-            status = getattr(response, "status_code", None)
-            if status in (404, 410):
-                _drop_endpoint(sub["endpoint"])
-        except Exception:
-            continue
-    del public
+    try:
+        targets = _recipients(item["device_id"])
+    except Exception as exc:
+        print(f"push recipients {type(exc).__name__}", flush=True)
+        return
+    if not targets:
+        print(f"push none {item['title']}", flush=True)
+        return
+    for sub in targets:
+        deliver_one(
+            str(sub.get("endpoint") or ""),
+            str(sub.get("p256dh") or ""),
+            str(sub.get("auth") or ""),
+            item["title"],
+            item["body"],
+            item["url"],
+            item["tag"],
+        )
 
 
 def _drop_endpoint(endpoint: str) -> None:

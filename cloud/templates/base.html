@@ -555,6 +555,8 @@
     });
     {% if page != "instrument" and request.method == "GET" %}
     setTimeout(function () {
+      var banner = document.getElementById("push-banner");
+      if (banner && !banner.hidden) return;
       var el = document.activeElement;
       if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT")) return;
       location.reload();
@@ -562,6 +564,6 @@
     {% endif %}
   </script>
   <script src="/static/password.js?v=login3"></script>
-  <script src="/static/push.js?v=push1"></script>
+  <script src="/static/push.js?v=push2"></script>
 </body>
 </html>

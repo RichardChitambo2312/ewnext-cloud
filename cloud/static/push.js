@@ -1,9 +1,23 @@
 (function () {
   if (!("serviceWorker" in navigator)) return;
 
-  navigator.serviceWorker.register("/sw.js").catch(function () {});
+  function whenActive() {
+    return navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" }).then(function (reg) {
+      var worker = reg.installing || reg.waiting;
+      if (!worker) return navigator.serviceWorker.ready;
+      return new Promise(function (resolve) {
+        worker.addEventListener("statechange", function () {
+          if (worker.state === "activated") resolve(reg);
+        });
+        if (worker.state === "activated") resolve(reg);
+      });
+    });
+  }
 
-  if (document.body.dataset.push !== "1") return;
+  if (document.body.dataset.push !== "1") {
+    whenActive().catch(function () {});
+    return;
+  }
 
   var banner = document.getElementById("push-banner");
   var text = document.getElementById("push-banner-text");
@@ -38,8 +52,8 @@
     return out;
   }
 
-  function subscribe() {
-    return navigator.serviceWorker.ready.then(function (reg) {
+  function subscribe(welcome) {
+    return whenActive().then(function (reg) {
       return fetch("/api/push/public-key", { credentials: "same-origin" }).then(function (res) {
         if (!res.ok) throw new Error("key");
         return res.json();
@@ -49,20 +63,48 @@
           applicationServerKey: urlBase64ToBytes(data.publicKey)
         });
       }).then(function (sub) {
+        var saved = sub.toJSON ? sub.toJSON() : sub;
+        saved.welcome = !!welcome;
         return fetch("/api/push/subscribe", {
           method: "POST",
           credentials: "same-origin",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(sub)
+          body: JSON.stringify(saved)
         });
       });
     });
+  }
+
+  function markReady(res) {
+    if (!res || !res.ok) throw new Error("save");
+    sessionStorage.setItem("keyview-push-tested", "1");
+    hide();
   }
 
   if (later) {
     later.addEventListener("click", function () {
       sessionStorage.setItem("keyview-push-later", "1");
       hide();
+    });
+  }
+
+  if (allow) {
+    allow.addEventListener("click", function () {
+      allow.disabled = true;
+      var ask = Notification.permission === "granted"
+        ? Promise.resolve("granted")
+        : Notification.requestPermission();
+      ask.then(function (result) {
+        if (result !== "granted") {
+          allow.disabled = false;
+          show("Alerts stay off until you allow notifications.", false);
+          return;
+        }
+        subscribe(true).then(markReady).catch(function () {
+          allow.disabled = false;
+          show("Alerts could not reach this phone. Stay in the home-screen app and try again.", true);
+        });
+      });
     });
   }
 
@@ -74,7 +116,13 @@
   if (!("Notification" in window) || !("PushManager" in window)) return;
 
   if (Notification.permission === "granted") {
-    subscribe().catch(function () {});
+    var tested = sessionStorage.getItem("keyview-push-tested") === "1";
+    subscribe(!tested).then(function (res) {
+      if (!tested) markReady(res);
+      else if (!res || !res.ok) throw new Error("save");
+    }).catch(function () {
+      show("Alerts could not reach this phone. Tap Turn on alerts again.", true);
+    });
     return;
   }
 
@@ -84,21 +132,4 @@
   }
 
   show("Turn on alerts for alarms, defrost, and controllers going offline.", true);
-  if (!allow) return;
-  allow.addEventListener("click", function () {
-    allow.disabled = true;
-    Notification.requestPermission().then(function (result) {
-      if (result !== "granted") {
-        allow.disabled = false;
-        show("Alerts stay off until you allow notifications.", false);
-        return;
-      }
-      subscribe().then(function () {
-        hide();
-      }).catch(function () {
-        allow.disabled = false;
-        show("Alerts could not be turned on. Open Keyview from the home screen and try again.", true);
-      });
-    });
-  });
 })();

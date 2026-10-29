@@ -2123,6 +2123,84 @@ def service_worker():
     )
 
 
+def _session_push_portfolio(request: Request) -> list[str] | None:
+    if is_super_admin(request):
+        return None
+    uid = as_int(request.session.get("uid"))
+    if not uid:
+        return []
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            q("SELECT id, name, email, password_hash, role, organisation_id FROM app_users WHERE id=?"),
+            (uid,),
+        )
+        row = cur.fetchone()
+        user = _sql_row(row, cur) if row else None
+    if not user:
+        return []
+    return user_portfolio(user)
+
+
+def current_push_notes(request: Request) -> list[dict[str, str]]:
+    portfolio = _session_push_portfolio(request)
+    notes: list[dict[str, str]] = []
+    now = datetime.now(timezone.utc)
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(INSTRUMENT_SELECT)
+        grouped: dict[str, list[dict]] = {}
+        for row in fetchall(cur):
+            device_id = str(row.get("device_id") or "")
+            if portfolio is not None and device_id not in portfolio:
+                continue
+            grouped.setdefault(device_id, []).append(row)
+        for device_id, instruments in grouped.items():
+            if instruments and not any(instrument_online(inst, now) for inst in instruments):
+                site = _push_site_label(cur, device_id)
+                notes.append(
+                    {
+                        "title": "Device offline",
+                        "body": f"{site} has stopped reporting.",
+                        "url": f"/sites/{quote(device_id, safe='')}",
+                        "tag": f"device-offline:{device_id}",
+                    }
+                )
+                continue
+            for inst in instruments:
+                name, site, url = _instrument_push_target(cur, inst)
+                ident = f"{device_id}:{inst.get('instrument_id')}"
+                if int(inst.get("alarm_active") or 0):
+                    notes.append(
+                        {
+                            "title": "High temperature",
+                            "body": f"{name} at {site} is {format_temp(inst.get('last_probe1'))}.",
+                            "url": url,
+                            "tag": f"alarm:{ident}",
+                        }
+                    )
+                flags = inst.get("last_flags")
+                if flags is not None and decode_flags(flags).get("defrost_active") and not int(inst.get("last_stale") or 0):
+                    notes.append(
+                        {
+                            "title": "Defrost",
+                            "body": f"{name} at {site} is in defrost.",
+                            "url": url,
+                            "tag": f"defrost:{ident}",
+                        }
+                    )
+                if not instrument_online(inst, now):
+                    notes.append(
+                        {
+                            "title": "Instrument offline",
+                            "body": f"{name} at {site} has stopped reporting.",
+                            "url": url,
+                            "tag": f"offline:{ident}",
+                        }
+                    )
+    return notes
+
+
 @app.get("/api/push/public-key")
 def push_public_key(request: Request):
     if not logged_in(request):
@@ -2154,6 +2232,29 @@ async def push_subscribe(request: Request):
 
     uid = as_int(request.session.get("uid"))
     push_notify.save_subscription(uid, is_super_admin(request), endpoint, p256dh, auth)
+    if not body.get("welcome"):
+        return {"ok": True}
+    result = push_notify.deliver_one(
+        endpoint,
+        p256dh,
+        auth,
+        "Keyview alerts are on",
+        "This phone will get alarms, defrost and offline alerts.",
+        "/",
+        "push-ready",
+    )
+    if result != "ok":
+        return JSONResponse({"ok": False}, status_code=502)
+    for note in current_push_notes(request)[:4]:
+        push_notify.enqueue_direct(
+            endpoint,
+            p256dh,
+            auth,
+            note["title"],
+            note["body"],
+            note["url"],
+            note["tag"],
+        )
     return {"ok": True}
 
 

@@ -13,14 +13,19 @@ self.addEventListener("push", function (event) {
   } catch (err) {
     data = { title: "Keyview", body: event.data ? event.data.text() : "" };
   }
+  var title = data.title || "Keyview";
+  var body = data.body || "Keyview alert";
+  var url = data.url || "/";
+  var tag = data.tag || "keyview";
+  var icon = new URL("/static/brand/icon-192.png", self.location.origin).href;
   event.waitUntil(
-    self.registration.showNotification(data.title || "Keyview", {
-      body: data.body || "",
-      icon: "/static/brand/icon-192.png",
-      badge: "/static/brand/icon-192.png",
-      tag: data.tag || "keyview",
-      renotify: true,
-      data: { url: data.url || "/" }
+    self.registration.showNotification(title, {
+      body: body,
+      icon: icon,
+      tag: tag,
+      data: { url: url }
+    }).catch(function () {
+      return self.registration.showNotification(title, { body: body });
     })
   );
 });
@@ -28,6 +33,7 @@ self.addEventListener("push", function (event) {
 self.addEventListener("notificationclick", function (event) {
   event.notification.close();
   var target = (event.notification.data && event.notification.data.url) || "/";
+  if (target.indexOf("http") !== 0) target = self.location.origin + target;
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(function (windows) {
       for (var i = 0; i < windows.length; i++) {
