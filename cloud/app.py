@@ -274,6 +274,18 @@ def init_db() -> None:
             )
             """
         )
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS password_resets (
+                id {serial},
+                user_id INTEGER NOT NULL,
+                token_hash TEXT NOT NULL UNIQUE,
+                created_at {ts} NOT NULL,
+                expires_at {ts} NOT NULL,
+                used_at {ts}
+            )
+            """
+        )
         conn.commit()
         _ensure_org_tree(cur)
         _backfill_sites(cur)
@@ -2922,6 +2934,68 @@ def save_org_invite(cur, org_id: int, email: str, role: str) -> str:
     return token
 
 
+def _reset_token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def save_password_reset(cur, user_id: int) -> str:
+    token = secrets.token_urlsafe(32)
+    created = datetime.now(timezone.utc)
+    expires = created + timedelta(hours=2)
+    cur.execute(
+        q("UPDATE password_resets SET used_at=? WHERE user_id=? AND used_at IS NULL"),
+        (created.isoformat(), user_id),
+    )
+    cur.execute(
+        q(
+            """
+            INSERT INTO password_resets (user_id, token_hash, created_at, expires_at)
+            VALUES (?, ?, ?, ?)
+            """
+        ),
+        (user_id, _reset_token_hash(token), created.isoformat(), expires.isoformat()),
+    )
+    return token
+
+
+def load_password_reset(token: str) -> dict | None:
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            q(
+                """
+                SELECT r.id, r.user_id, r.expires_at, r.used_at, u.email, u.name
+                FROM password_resets r
+                JOIN app_users u ON u.id = r.user_id
+                WHERE r.token_hash=?
+                """
+            ),
+            (_reset_token_hash(token),),
+        )
+        return _sql_row(cur.fetchone(), cur)
+
+
+def reset_is_open(row: dict | None) -> str | None:
+    if not row:
+        return "This reset link is not valid."
+    if row.get("used_at"):
+        return "This reset link has already been used."
+    expires = parse_ts(row.get("expires_at"))
+    if expires and expires < datetime.now(timezone.utc):
+        return "This reset link has expired. Ask for a new one."
+    return None
+
+
+def send_reset_email(email: str, link: str) -> bool:
+    subject = "Reset your Keyview Cloud password"
+    body = (
+        "A password reset was requested for your Keyview Cloud account.\n\n"
+        f"Open this link to choose a new password:\n{link}\n\n"
+        "This link expires in 2 hours. If you did not ask for this, you can ignore this email.\n"
+    )
+    return _deliver_email([email], subject, body)
+
+
 def send_invite_email(email: str, org_name: str, role: str, link: str) -> bool:
     subject = f"Join {org_name} on Keyview Cloud"
     body = (
@@ -3330,7 +3404,88 @@ def organisation_invite(request: Request, email: str = Form(""), role: str = For
 
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request, "error": None})
+    notice = None
+    if request.query_params.get("reset") == "1":
+        notice = "Password updated. Sign in with your new password."
+    return templates.TemplateResponse("login.html", {"request": request, "error": None, "notice": notice})
+
+
+@app.get("/forgot", response_class=HTMLResponse)
+def forgot_page(request: Request):
+    if logged_in(request):
+        return RedirectResponse("/", status_code=302)
+    return templates.TemplateResponse("forgot.html", {"request": request, "error": None, "notice": None})
+
+
+@app.post("/forgot", response_class=HTMLResponse)
+def forgot_submit(request: Request, email: str = Form("")):
+    if logged_in(request):
+        return RedirectResponse("/", status_code=302)
+    mail = normalize_email(email)
+    notice = "If that email has an account, a reset link is on its way. It expires in 2 hours."
+    if not valid_email(mail):
+        return templates.TemplateResponse(
+            "forgot.html",
+            {"request": request, "error": "Enter the email address on the account.", "notice": None},
+            status_code=400,
+        )
+    user = find_user_by_email(mail)
+    if user and user.get("id"):
+        with db() as conn:
+            cur = conn.cursor()
+            token = save_password_reset(cur, int(user["id"]))
+        send_reset_email(mail, f"{public_base(request)}/reset/{token}")
+    return templates.TemplateResponse("forgot.html", {"request": request, "error": None, "notice": notice})
+
+
+@app.get("/reset/{token}", response_class=HTMLResponse)
+def reset_page(request: Request, token: str):
+    closed = reset_is_open(load_password_reset(token))
+    return templates.TemplateResponse(
+        "reset.html",
+        {"request": request, "error": closed, "token": token, "open": closed is None},
+        status_code=200 if closed is None else 400,
+    )
+
+
+@app.post("/reset/{token}", response_class=HTMLResponse)
+def reset_submit(request: Request, token: str, password: str = Form(""), confirm: str = Form("")):
+    row = load_password_reset(token)
+    closed = reset_is_open(row)
+    if closed or not row:
+        return templates.TemplateResponse(
+            "reset.html",
+            {"request": request, "error": closed or "This reset link is not valid.", "token": token, "open": False},
+            status_code=400,
+        )
+    if len(password) < PASSWORD_MIN_LEN:
+        return templates.TemplateResponse(
+            "reset.html",
+            {
+                "request": request,
+                "error": f"Password must be at least {PASSWORD_MIN_LEN} characters.",
+                "token": token,
+                "open": True,
+            },
+            status_code=400,
+        )
+    if password != confirm:
+        return templates.TemplateResponse(
+            "reset.html",
+            {"request": request, "error": "The two passwords do not match.", "token": token, "open": True},
+            status_code=400,
+        )
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            q("UPDATE app_users SET password_hash=? WHERE id=?"),
+            (hash_password(password), int(row["user_id"])),
+        )
+        cur.execute(
+            q("UPDATE password_resets SET used_at=? WHERE id=? AND used_at IS NULL"),
+            (now_iso(), int(row["id"])),
+        )
+    return RedirectResponse("/login?reset=1", status_code=303)
 
 
 @app.post("/login")
@@ -3347,7 +3502,7 @@ def login_submit(request: Request, password: str = Form(...), email: str = Form(
         return RedirectResponse("/", status_code=302)
     return templates.TemplateResponse(
         "login.html",
-        {"request": request, "error": "Invalid email or password"},
+        {"request": request, "error": "Invalid email or password", "notice": None},
         status_code=401,
     )
 

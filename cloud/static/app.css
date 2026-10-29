@@ -1133,7 +1133,7 @@ th {
   display: block;
   width: min(280px, 100%);
   height: auto;
-  margin: 0 0 16px;
+  margin: 0 auto 20px;
 }
 
 .login-card h1 {
@@ -1174,6 +1174,32 @@ th {
   margin: 0;
   color: var(--muted);
   font-size: 0.82rem;
+}
+
+.login-forgot {
+  margin: 0;
+  text-align: right;
+  font-size: 0.85rem;
+}
+
+.login-forgot a,
+.login-switch a {
+  color: var(--nav);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.login-forgot a:hover,
+.login-switch a:hover {
+  text-decoration: underline;
+}
+
+.login-ok {
+  color: #166534;
+  background: var(--ok-soft);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 0.85rem;
 }
 
 .error {
@@ -2604,6 +2630,8 @@ th {
 
   .login-logo {
     width: min(220px, 80%);
+    margin-left: auto;
+    margin-right: auto;
   }
 
   .primary-btn {

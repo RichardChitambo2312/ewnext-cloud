@@ -7,19 +7,19 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <title>Keyview Cloud — Sign in</title>
-  <link rel="stylesheet" href="/static/app.css?v=signup1">
+  <link rel="stylesheet" href="/static/app.css?v=login2">
 </head>
 <body class="login-body">
   <main class="login-card">
     <img class="login-logo" src="/static/brand/keyview-logo-colour.png" alt="Keyview Intelligent Monitoring">
-    <h1>Cloud console</h1>
-    <p class="muted">Sign in to view live controllers and queue setpoint changes.</p>
+    {% if notice %}<p class="login-ok">{{ notice }}</p>{% endif %}
     {% if error %}<p class="error">{{ error }}</p>{% endif %}
     <form method="post" action="/login">
       <label for="email">Email</label>
       <input id="email" name="email" type="text" autocomplete="username" placeholder="admin">
       <label for="password">Password</label>
       <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <p class="login-forgot"><a href="/forgot">Forgot password?</a></p>
       <button class="primary-btn" type="submit">Sign in</button>
     </form>
     <p class="login-switch">New organisation? <a href="/signup">Create an account</a></p>

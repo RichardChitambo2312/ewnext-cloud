@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#2980b9">
+  <title>Keyview Cloud — Forgot password</title>
+  <link rel="stylesheet" href="/static/app.css?v=login2">
+</head>
+<body class="login-body">
+  <main class="login-card">
+    <img class="login-logo" src="/static/brand/keyview-logo-colour.png" alt="Keyview Intelligent Monitoring">
+    <h1>Forgot password</h1>
+    <p class="muted">Enter the email on your account. We will send a link to choose a new password.</p>
+    {% if notice %}<p class="login-ok">{{ notice }}</p>{% endif %}
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+    {% if not notice %}
+    <form method="post" action="/forgot">
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" autocomplete="email" required>
+      <button class="primary-btn" type="submit">Send reset link</button>
+    </form>
+    {% endif %}
+    <p class="login-switch"><a href="/login">Back to sign in</a></p>
+  </main>
+</body>
+</html>

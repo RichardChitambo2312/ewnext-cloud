@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#2980b9">
+  <title>Keyview Cloud — New password</title>
+  <link rel="stylesheet" href="/static/app.css?v=login2">
+</head>
+<body class="login-body">
+  <main class="login-card">
+    <img class="login-logo" src="/static/brand/keyview-logo-colour.png" alt="Keyview Intelligent Monitoring">
+    <h1>Choose a new password</h1>
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+    {% if open %}
+    <form method="post" action="/reset/{{ token }}">
+      <label for="password">New password</label>
+      <input id="password" name="password" type="password" minlength="8" required autocomplete="new-password">
+      <label for="confirm">Confirm password</label>
+      <input id="confirm" name="confirm" type="password" minlength="8" required autocomplete="new-password">
+      <button class="primary-btn" type="submit">Update password</button>
+    </form>
+    {% endif %}
+    <p class="login-switch"><a href="/login">Back to sign in</a></p>
+  </main>
+</body>
+</html>
