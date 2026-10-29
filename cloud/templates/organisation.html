@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}{{ org.name if org else "Organisation" }} — Keyview Cloud{% endblock %}
+{% block content %}
+        <div class="page-head">
+          <div>
+            <p class="eyebrow">Under the main organisation</p>
+            <h1>{{ org.name if org else "Organisation" }}</h1>
+            <p class="page-sub">Add a site with the gateway Device ID, and invite people into this organisation.</p>
+          </div>
+        </div>
+        {% if notice %}<p class="notice">{{ notice }}</p>{% endif %}
+        {% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+        <section class="user-layout">
+          <article class="panel user-form-card">
+            <h2>Add a site</h2>
+            <form method="post" action="/organisation/sites" class="user-form">
+              <label for="device_id">Device ID</label>
+              <input id="device_id" name="device_id" maxlength="64" required placeholder="Unique ID from the gateway">
+              <p class="muted">Each Device ID can belong to one organisation.</p>
+              <button class="primary-btn" type="submit">Add site</button>
+            </form>
+            <h2>Invite a user</h2>
+            <form method="post" action="/organisation/invites" class="user-form">
+              <label for="email">Email</label>
+              <input id="email" name="email" type="email" maxlength="120" required>
+              <label for="role">Role</label>
+              <select id="role" name="role">
+                <option value="sub_operator">Operator</option>
+                <option value="org_admin">Organisation administrator</option>
+              </select>
+              <button class="primary-btn" type="submit">Send invite</button>
+            </form>
+          </article>
+          <div class="user-list">
+            <article class="panel">
+              <h2>Sites</h2>
+              {% if sites %}
+              <ul>
+                {% for site in sites %}
+                <li><a href="/sites/{{ site }}">{{ site_names.get(site, site) }}</a></li>
+                {% endfor %}
+              </ul>
+              {% else %}
+              <p class="muted">No sites yet. Add the gateway Device ID.</p>
+              {% endif %}
+            </article>
+            <article class="panel">
+              <h2>People</h2>
+              {% for person in team %}
+              <p><strong>{{ person.name }}</strong> · {{ person.email }} · {{ person.role_label }}</p>
+              {% else %}
+              <p class="muted">No people yet.</p>
+              {% endfor %}
+              {% if invites %}
+              <h2>Invites waiting</h2>
+              {% for invite in invites %}
+              <p>{{ invite.email }} · {{ invite.role_label }}</p>
+              {% endfor %}
+              {% endif %}
+            </article>
+          </div>
+        </section>
+{% endblock %}

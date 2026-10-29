@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#2980b9">
+  <title>Keyview Cloud — Sign up</title>
+  <link rel="stylesheet" href="/static/app.css?v=signup1">
+</head>
+<body class="login-body">
+  <main class="login-card login-card-wide">
+    <img class="login-logo" src="/static/brand/keyview-logo-colour.png" alt="Keyview Intelligent Monitoring">
+    <h1>Create an account</h1>
+    <p class="muted">Your organisation is added under the main Keyview organisation.</p>
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+    <form method="post" action="/signup">
+      <label for="first_name">Name</label>
+      <input id="first_name" name="first_name" maxlength="40" required autocomplete="given-name" value="{{ form.first_name }}">
+      <label for="surname">Surname</label>
+      <input id="surname" name="surname" maxlength="40" required autocomplete="family-name" value="{{ form.surname }}">
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" maxlength="120" required autocomplete="email" value="{{ form.email }}">
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" minlength="8" required autocomplete="new-password">
+      <label for="organisation_name">Organisation name</label>
+      <input id="organisation_name" name="organisation_name" maxlength="80" required value="{{ form.organisation_name }}">
+      <label for="device_id">Device ID</label>
+      <input id="device_id" name="device_id" maxlength="64" autocomplete="off" placeholder="Optional, from the gateway" value="{{ form.device_id }}">
+      <p class="login-note">Add a site by entering the gateway’s unique Device ID. You can add more later.</p>
+      <label for="invite_email">Invite someone</label>
+      <input id="invite_email" name="invite_email" type="email" maxlength="120" autocomplete="off" placeholder="Optional email" value="{{ form.invite_email }}">
+      <label for="invite_role">Their role</label>
+      <select id="invite_role" name="invite_role">
+        <option value="sub_operator"{% if form.invite_role != 'org_admin' %} selected{% endif %}>Operator</option>
+        <option value="org_admin"{% if form.invite_role == 'org_admin' %} selected{% endif %}>Organisation administrator</option>
+      </select>
+      <p class="login-note">Leave the invite email blank if you are the only user for now. An email invite lets them set a password and join this organisation.</p>
+      <button class="primary-btn" type="submit">Create account</button>
+    </form>
+    <p class="login-switch">Already have an account? <a href="/login">Sign in</a></p>
+  </main>
+</body>
+</html>

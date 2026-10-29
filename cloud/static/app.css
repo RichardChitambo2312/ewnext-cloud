@@ -1152,11 +1152,28 @@ th {
   font-weight: 600;
 }
 
-.login-card input {
+.login-card input,
+.login-card select {
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
   padding: 10px 12px;
   background: var(--fog);
+  width: 100%;
+}
+
+.login-card-wide {
+  width: min(480px, calc(100% - 32px));
+}
+
+.login-switch {
+  margin: 16px 0 0;
+  font-size: 0.9rem;
+}
+
+.login-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
 }
 
 .error {

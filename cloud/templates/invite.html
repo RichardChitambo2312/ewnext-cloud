@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#2980b9">
+  <title>Keyview Cloud — Join</title>
+  <link rel="stylesheet" href="/static/app.css?v=signup1">
+</head>
+<body class="login-body">
+  <main class="login-card">
+    <img class="login-logo" src="/static/brand/keyview-logo-colour.png" alt="Keyview Intelligent Monitoring">
+    <h1>Join organisation</h1>
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+    {% if invite %}
+    <p class="muted">{{ invite.email }} is invited to {{ invite.organisation_name }} as {{ invite.role_label }}.</p>
+    <form method="post" action="/invite/{{ token }}">
+      <label for="name">Name</label>
+      <input id="name" name="name" maxlength="80" required autocomplete="name">
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" minlength="8" required autocomplete="new-password">
+      <button class="primary-btn" type="submit">Join</button>
+    </form>
+    {% else %}
+    <p class="login-switch"><a href="/login">Back to sign in</a></p>
+    {% endif %}
+  </main>
+</body>
+</html>

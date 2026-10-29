@@ -260,6 +260,20 @@ def init_db() -> None:
         _ensure_column(cur, "sites", "subscription_start", ts)
         _ensure_column(cur, "sites", "subscription_until", ts)
         _ensure_column(cur, "sites", "subscription_locked", "INTEGER DEFAULT 0")
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS org_invites (
+                id {serial},
+                organisation_id INTEGER NOT NULL,
+                email TEXT NOT NULL,
+                role TEXT NOT NULL,
+                token TEXT NOT NULL UNIQUE,
+                created_at {ts} NOT NULL,
+                expires_at {ts} NOT NULL,
+                accepted_at {ts}
+            )
+            """
+        )
         conn.commit()
         _ensure_org_tree(cur)
         _backfill_sites(cur)
@@ -726,9 +740,15 @@ def logged_in(request: Request) -> bool:
 
 
 def is_manager(request: Request) -> bool:
-    if request.session.get("admin"):
+    if is_super_admin(request):
         return True
+    if not request.session.get("admin"):
+        return False
     return normalize_role(request.session.get("role")) == "org_admin"
+
+
+def is_org_lead(request: Request) -> bool:
+    return normalize_role(request.session.get("role")) == "org_admin" and not is_manager(request)
 
 
 def is_super_admin(request: Request | None) -> bool:
@@ -832,6 +852,7 @@ def attach_session(ctx: dict, request: Request, page: str) -> dict:
             "page": page,
             "admin_name": session_name(request),
             "is_manager": is_manager(request),
+            "is_org_lead": is_org_lead(request),
             "is_super_admin": is_super_admin(request),
             "back_href": back[0] if back else None,
             "back_label": back[1] if back else "Back",
@@ -859,13 +880,27 @@ def org_is_locked(organisation_id: int | None) -> bool:
     return bool(int(_row_get(row, "locked", 0) or 0))
 
 
+def is_root_organisation(org_id: int | None) -> bool:
+    if not org_id:
+        return False
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(q("SELECT parent_id FROM organisations WHERE id=?"), (org_id,))
+        row = cur.fetchone()
+    if not row:
+        return False
+    return _row_get(row, "parent_id", 0) is None
+
+
 def user_portfolio(user: dict) -> list[str] | None:
     role = normalize_role(user.get("role"))
     org_id = as_int(user.get("organisation_id"))
-    if role == "org_admin":
+    if role == "org_admin" and (org_id is None or is_root_organisation(org_id)):
         return None
     if org_is_locked(org_id):
         return []
+    if role == "org_admin":
+        return org_sites_for(org_id, include_children=False)
     portfolio = org_sites_for(org_id, include_children=False)
     assigned = load_user_sites(int(user["id"])) if user.get("id") is not None else []
     if assigned:
@@ -880,8 +915,9 @@ def start_user_session(request: Request, user: dict) -> None:
     request.session["uid"] = int(user["id"])
     request.session["name"] = user["name"]
     request.session["role"] = role
-    request.session["admin"] = role == "org_admin"
-    request.session["org_id"] = as_int(user.get("organisation_id"))
+    org_id = as_int(user.get("organisation_id"))
+    request.session["admin"] = role == "org_admin" and (org_id is None or is_root_organisation(org_id))
+    request.session["org_id"] = org_id
     portfolio = user_portfolio(user)
     request.session["sites"] = [] if portfolio is None else portfolio
 
@@ -979,8 +1015,8 @@ def alarm_email_recipients(device_id: str) -> list[str]:
     return out
 
 
-def send_alarm_email(inst: dict, temp: float, high: float) -> bool:
-    if not smtp_configured():
+def _deliver_email(recipients: list[str], subject: str, body: str) -> bool:
+    if not smtp_configured() or not recipients:
         return False
     host = (os.environ.get("SMTP_HOST") or "").strip()
     port = as_int(os.environ.get("SMTP_PORT")) or 587
@@ -988,21 +1024,8 @@ def send_alarm_email(inst: dict, temp: float, high: float) -> bool:
     password = os.environ.get("SMTP_PASSWORD") or ""
     from_addr = (os.environ.get("SMTP_FROM") or user or "").strip()
     starttls = (os.environ.get("SMTP_STARTTLS") or "1").strip().lower() not in ("0", "false", "no")
-    recipients = alarm_email_recipients(str(inst.get("device_id") or ""))
-    if not from_addr or not recipients:
+    if not from_addr:
         return False
-    name = display_name(inst.get("label"), inst.get("server_name"), inst.get("instrument_id") or 0)
-    site = str(inst.get("site_name") or inst.get("device_id") or "")
-    subject = f"Keyview alarm: {name} at {site}"
-    body = (
-        f"{name} is in high-temperature alarm.\n\n"
-        f"Site: {site}\n"
-        f"Device ID: {inst.get('device_id')}\n"
-        f"Address: {inst.get('instrument_id')}\n"
-        f"Temperature: {format_temp(temp)}\n"
-        f"High alarm: {format_temp(high)}\n"
-        f"Time (UTC): {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}\n"
-    )
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = from_addr
@@ -1024,6 +1047,25 @@ def send_alarm_email(inst: dict, temp: float, high: float) -> bool:
         return True
     except Exception:
         return False
+
+
+def send_alarm_email(inst: dict, temp: float, high: float) -> bool:
+    if not smtp_configured():
+        return False
+    recipients = alarm_email_recipients(str(inst.get("device_id") or ""))
+    name = display_name(inst.get("label"), inst.get("server_name"), inst.get("instrument_id") or 0)
+    site = str(inst.get("site_name") or inst.get("device_id") or "")
+    subject = f"Keyview alarm: {name} at {site}"
+    body = (
+        f"{name} is in high-temperature alarm.\n\n"
+        f"Site: {site}\n"
+        f"Device ID: {inst.get('device_id')}\n"
+        f"Address: {inst.get('instrument_id')}\n"
+        f"Temperature: {format_temp(temp)}\n"
+        f"High alarm: {format_temp(high)}\n"
+        f"Time (UTC): {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}\n"
+    )
+    return _deliver_email(recipients, subject, body)
 
 
 def _sql_row(row: Any, cur=None) -> dict | None:
@@ -2745,6 +2787,535 @@ def users_delete(request: Request, user_id: int):
         cur.execute(q("DELETE FROM user_sites WHERE user_id=?"), (user_id,))
         cur.execute(q("DELETE FROM app_users WHERE id=?"), (user_id,))
     return RedirectResponse("/users", status_code=303)
+
+
+def valid_email(mail: str) -> bool:
+    return bool(mail) and "@" in mail and "." in mail.split("@")[-1] and " " not in mail
+
+
+def valid_device_id(value: str) -> bool:
+    if not value or value == "unknown" or len(value) < 2 or len(value) > 64:
+        return False
+    return all(ch.isalnum() or ch in "_-" for ch in value)
+
+
+def public_base(request: Request) -> str:
+    configured = (os.environ.get("PUBLIC_BASE_URL") or "").strip().rstrip("/")
+    if configured:
+        return configured
+    return str(request.base_url).rstrip("/")
+
+
+def main_organisation_id(cur) -> int | None:
+    cur.execute(q("SELECT id FROM organisations WHERE parent_id IS NULL ORDER BY id LIMIT 1"))
+    row = cur.fetchone()
+    if not row:
+        return None
+    return int(_row_get(row, "id", 0))
+
+
+def holding_organisation_id(cur) -> int | None:
+    root_id = main_organisation_id(cur)
+    if not root_id:
+        return None
+    cur.execute(
+        q("SELECT id FROM organisations WHERE parent_id=? AND name=? ORDER BY id LIMIT 1"),
+        (root_id, "Main"),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    return int(_row_get(row, "id", 0))
+
+
+def claim_device_for_org(cur, org_id: int, device_id: str) -> str | None:
+    site = normalize_device_id(device_id)
+    if not valid_device_id(site):
+        return "Enter the device's unique ID. Use letters, numbers, _ or -."
+    cur.execute(q("SELECT organisation_id FROM org_sites WHERE device_id=?"), (site,))
+    row = cur.fetchone()
+    if row:
+        existing = int(_row_get(row, "organisation_id", 0) or 0)
+        if existing == org_id:
+            return None
+        holding = holding_organisation_id(cur)
+        if existing != holding:
+            return "That device ID is already registered to another organisation."
+        cur.execute(q("DELETE FROM org_sites WHERE device_id=?"), (site,))
+        cur.execute(q("DELETE FROM user_sites WHERE device_id=?"), (site,))
+    ensure_site_record(cur, site)
+    cur.execute(
+        q("INSERT INTO org_sites (organisation_id, device_id) VALUES (?, ?)"),
+        (org_id, site),
+    )
+    return None
+
+
+def refresh_session_sites(request: Request) -> None:
+    uid = as_int(request.session.get("uid"))
+    if not uid:
+        return
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            q("SELECT id, name, email, password_hash, role, organisation_id FROM app_users WHERE id=?"),
+            (uid,),
+        )
+        row = cur.fetchone()
+    user = dict(row) if row and (isinstance(row, dict) or hasattr(row, "keys")) else None
+    if user is None and row:
+        user = {
+            "id": row[0],
+            "name": row[1],
+            "email": row[2],
+            "password_hash": row[3],
+            "role": row[4],
+            "organisation_id": row[5] if len(row) > 5 else None,
+        }
+    if not user:
+        return
+    portfolio = user_portfolio(user)
+    request.session["sites"] = [] if portfolio is None else portfolio
+
+
+def save_org_invite(cur, org_id: int, email: str, role: str) -> str:
+    token = secrets.token_urlsafe(32)
+    created = datetime.now(timezone.utc)
+    expires = (created + timedelta(days=7)).isoformat()
+    cur.execute(
+        q(
+            """
+            SELECT id FROM org_invites
+            WHERE organisation_id=? AND email=? AND accepted_at IS NULL
+            ORDER BY id DESC LIMIT 1
+            """
+        ),
+        (org_id, email),
+    )
+    existing = cur.fetchone()
+    if existing:
+        invite_id = int(_row_get(existing, "id", 0))
+        cur.execute(
+            q("UPDATE org_invites SET role=?, token=?, created_at=?, expires_at=? WHERE id=?"),
+            (role, token, created.isoformat(), expires, invite_id),
+        )
+    else:
+        cur.execute(
+            q(
+                """
+                INSERT INTO org_invites (organisation_id, email, role, token, created_at, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """
+            ),
+            (org_id, email, role, token, created.isoformat(), expires),
+        )
+    return token
+
+
+def send_invite_email(email: str, org_name: str, role: str, link: str) -> bool:
+    subject = f"Join {org_name} on Keyview Cloud"
+    body = (
+        f"You have been invited to join {org_name} on Keyview Cloud.\n\n"
+        f"Role: {role_label(role)}\n\n"
+        f"Open this link to set your password and join:\n{link}\n\n"
+        "This invite expires in 7 days.\n"
+    )
+    return _deliver_email([email], subject, body)
+
+
+def signup_form_values(**values: str) -> dict:
+    return {
+        "first_name": values.get("first_name", ""),
+        "surname": values.get("surname", ""),
+        "email": values.get("email", ""),
+        "organisation_name": values.get("organisation_name", ""),
+        "device_id": values.get("device_id", ""),
+        "invite_email": values.get("invite_email", ""),
+        "invite_role": values.get("invite_role", "sub_operator"),
+    }
+
+
+@app.get("/signup", response_class=HTMLResponse)
+def signup_page(request: Request):
+    if logged_in(request):
+        return RedirectResponse("/", status_code=302)
+    return templates.TemplateResponse(
+        "signup.html",
+        {"request": request, "error": None, "form": signup_form_values()},
+    )
+
+
+@app.post("/signup", response_class=HTMLResponse)
+def signup_submit(
+    request: Request,
+    first_name: str = Form(""),
+    surname: str = Form(""),
+    email: str = Form(""),
+    password: str = Form(""),
+    organisation_name: str = Form(""),
+    device_id: str = Form(""),
+    invite_email: str = Form(""),
+    invite_role: str = Form("sub_operator"),
+):
+    form = signup_form_values(
+        first_name=first_name,
+        surname=surname,
+        email=email,
+        organisation_name=organisation_name,
+        device_id=device_id,
+        invite_email=invite_email,
+        invite_role=invite_role,
+    )
+
+    def reject(message: str, status: int = 400):
+        return templates.TemplateResponse(
+            "signup.html",
+            {"request": request, "error": message, "form": form},
+            status_code=status,
+        )
+
+    given = " ".join(str(first_name or "").split())
+    family = " ".join(str(surname or "").split())
+    display = " ".join(part for part in (given, family) if part)
+    org_name = " ".join(str(organisation_name or "").split())
+    mail = normalize_email(email)
+    invite_mail = normalize_email(invite_email)
+    role_name = normalize_role(invite_role) if invite_mail else "sub_operator"
+    site = normalize_device_id(device_id) if str(device_id or "").strip() else ""
+    if not given or not family or len(display) > NAME_MAX_LEN:
+        return reject("Enter a name and surname, up to 80 characters together.")
+    if not valid_email(mail):
+        return reject("Enter a valid email address.")
+    if len(password) < PASSWORD_MIN_LEN:
+        return reject(f"Password must be at least {PASSWORD_MIN_LEN} characters.")
+    if not org_name or len(org_name) > NAME_MAX_LEN:
+        return reject("Enter an organisation name, up to 80 characters.")
+    if site and not valid_device_id(site):
+        return reject("Enter the device's unique ID. Use letters, numbers, _ or -.")
+    if invite_mail:
+        if not valid_email(invite_mail):
+            return reject("Enter a valid email for the person you want to invite.")
+        if invite_mail == mail:
+            return reject("Invite a different email from your own.")
+    if find_user_by_email(mail):
+        return reject("That email is already in use. Sign in instead.")
+    if invite_mail and find_user_by_email(invite_mail):
+        return reject("That invited email already has an account.")
+
+    invite_link = ""
+    invite_sent = False
+    try:
+        with db() as conn:
+            cur = conn.cursor()
+            root_id = main_organisation_id(cur)
+            if not root_id:
+                return reject("The main organisation is not ready yet.", 500)
+            if invite_mail:
+                cur.execute(
+                    q("SELECT id FROM org_invites WHERE email=? AND accepted_at IS NULL"),
+                    (invite_mail,),
+                )
+                if cur.fetchone():
+                    return reject("That email already has an invite waiting.")
+            created = now_iso()
+            cur.execute(
+                q("INSERT INTO organisations (name, parent_id, locked, created_at) VALUES (?, ?, 0, ?) RETURNING id"),
+                (org_name, root_id, created),
+            )
+            org_id = int(_row_get(cur.fetchone(), "id", 0))
+            if site:
+                claim_error = claim_device_for_org(cur, org_id, site)
+                if claim_error:
+                    raise ValueError(claim_error)
+            cur.execute(
+                q(
+                    """
+                    INSERT INTO app_users (name, email, password_hash, role, organisation_id, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """
+                ),
+                (display, mail, hash_password(password), "org_admin", org_id, now_iso()),
+            )
+            if invite_mail:
+                token = save_org_invite(cur, org_id, invite_mail, role_name)
+                invite_link = f"{public_base(request)}/invite/{token}"
+    except ValueError as exc:
+        return reject(str(exc))
+    except Exception as exc:
+        text = str(exc).lower()
+        if "unique" in text or "duplicate" in text:
+            return reject("That email is already in use. Sign in instead.")
+        raise
+    user = find_user_by_email(mail)
+    if not user:
+        return reject("Could not create the account.", 500)
+    start_user_session(request, user)
+    if invite_link:
+        invite_sent = send_invite_email(invite_mail, org_name, role_name, invite_link)
+    notice = "Account created."
+    if invite_link and invite_sent:
+        notice = f"Account created. An invite was emailed to {invite_mail}."
+    elif invite_link:
+        notice = f"Account created. Email is not sending yet. Share this invite link: {invite_link}"
+    return RedirectResponse(f"/organisation?notice={quote(notice)}", status_code=303)
+
+
+def load_invite(token: str) -> dict | None:
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            q(
+                """
+                SELECT i.id, i.organisation_id, i.email, i.role, i.token, i.expires_at, i.accepted_at,
+                       o.name AS organisation_name
+                FROM org_invites i
+                JOIN organisations o ON o.id = i.organisation_id
+                WHERE i.token=?
+                """
+            ),
+            (token,),
+        )
+        row = cur.fetchone()
+        invite = _sql_row(row, cur)
+        if invite:
+            invite["role_label"] = role_label(invite.get("role"))
+        return invite
+
+
+def invite_is_open(invite: dict) -> str | None:
+    if invite.get("accepted_at"):
+        return "This invite has already been used."
+    expires = parse_ts(invite.get("expires_at"))
+    if expires and expires < datetime.now(timezone.utc):
+        return "This invite has expired. Ask for a new one."
+    return None
+
+
+@app.get("/invite/{token}", response_class=HTMLResponse)
+def invite_page(request: Request, token: str):
+    invite = load_invite(token)
+    if not invite:
+        return templates.TemplateResponse(
+            "invite.html",
+            {"request": request, "error": "This invite link is not valid.", "invite": None, "token": token},
+            status_code=404,
+        )
+    closed = invite_is_open(invite)
+    return templates.TemplateResponse(
+        "invite.html",
+        {
+            "request": request,
+            "error": closed,
+            "invite": None if closed else invite,
+            "token": token,
+        },
+    )
+
+
+@app.post("/invite/{token}", response_class=HTMLResponse)
+def invite_accept(request: Request, token: str, name: str = Form(""), password: str = Form("")):
+    invite = load_invite(token)
+    if not invite:
+        return templates.TemplateResponse(
+            "invite.html",
+            {"request": request, "error": "This invite link is not valid.", "invite": None, "token": token},
+            status_code=404,
+        )
+    closed = invite_is_open(invite)
+    if closed:
+        return templates.TemplateResponse(
+            "invite.html",
+            {"request": request, "error": closed, "invite": None, "token": token},
+            status_code=400,
+        )
+    display = " ".join(str(name or "").split())
+    if not display or len(display) > NAME_MAX_LEN:
+        return templates.TemplateResponse(
+            "invite.html",
+            {"request": request, "error": "Enter your name.", "invite": invite, "token": token},
+            status_code=400,
+        )
+    if len(password) < PASSWORD_MIN_LEN:
+        return templates.TemplateResponse(
+            "invite.html",
+            {
+                "request": request,
+                "error": f"Password must be at least {PASSWORD_MIN_LEN} characters.",
+                "invite": invite,
+                "token": token,
+            },
+            status_code=400,
+        )
+    if find_user_by_email(str(invite.get("email") or "")):
+        return templates.TemplateResponse(
+            "invite.html",
+            {"request": request, "error": "That email already has an account. Sign in instead.", "invite": None, "token": token},
+            status_code=400,
+        )
+    role_name = normalize_role(invite.get("role"))
+    org_id = as_int(invite.get("organisation_id"))
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            q(
+                """
+                INSERT INTO app_users (name, email, password_hash, role, organisation_id, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """
+            ),
+            (display, normalize_email(invite.get("email")), hash_password(password), role_name, org_id, now_iso()),
+        )
+        cur.execute(
+            q("UPDATE org_invites SET accepted_at=? WHERE id=? AND accepted_at IS NULL"),
+            (now_iso(), int(invite["id"])),
+        )
+    user = find_user_by_email(normalize_email(invite.get("email")))
+    if not user:
+        return templates.TemplateResponse(
+            "invite.html",
+            {"request": request, "error": "Could not join the organisation.", "invite": invite, "token": token},
+            status_code=500,
+        )
+    start_user_session(request, user)
+    return RedirectResponse("/", status_code=303)
+
+
+def organisation_home_ctx(request: Request, error: str | None = None, notice: str | None = None) -> dict:
+    org_id = as_int(request.session.get("org_id"))
+    org = None
+    team: list[dict] = []
+    invites: list[dict] = []
+    sites: list[str] = []
+    if org_id:
+        with db() as conn:
+            cur = conn.cursor()
+            cur.execute(q("SELECT id, name, parent_id, locked FROM organisations WHERE id=?"), (org_id,))
+            row = cur.fetchone()
+            org = _sql_row(row, cur)
+            cur.execute(
+                q("SELECT id, name, email, role FROM app_users WHERE organisation_id=? ORDER BY name, email"),
+                (org_id,),
+            )
+            team = fetchall(cur)
+            cur.execute(
+                q(
+                    """
+                    SELECT email, role, expires_at FROM org_invites
+                    WHERE organisation_id=? AND accepted_at IS NULL
+                    ORDER BY created_at DESC
+                    """
+                ),
+                (org_id,),
+            )
+            invites = fetchall(cur)
+        sites = org_sites_for(org_id, include_children=False)
+    names = {k: v["display_name"] for k, v in load_site_records(sites).items()} if sites else {}
+    for person in team:
+        person["role_label"] = role_label(person.get("role"))
+    for invite in invites:
+        invite["role_label"] = role_label(invite.get("role"))
+    ctx = dashboard_shell(request)
+    ctx.update(
+        {
+            "org": org,
+            "team": team,
+            "invites": invites,
+            "sites": sites,
+            "site_names": names,
+            "error": error,
+            "notice": notice,
+        }
+    )
+    return attach_session(ctx, request, "organisation")
+
+
+@app.get("/organisation", response_class=HTMLResponse)
+def organisation_home(request: Request, notice: str = ""):
+    if not logged_in(request):
+        return RedirectResponse("/login", status_code=302)
+    if is_manager(request):
+        return RedirectResponse("/organisations", status_code=302)
+    if not is_org_lead(request):
+        return RedirectResponse("/", status_code=302)
+    return templates.TemplateResponse(
+        "organisation.html",
+        organisation_home_ctx(request, notice=notice or None),
+    )
+
+
+@app.post("/organisation/sites", response_class=HTMLResponse)
+def organisation_add_site(request: Request, device_id: str = Form("")):
+    if not logged_in(request):
+        return RedirectResponse("/login", status_code=302)
+    if not is_org_lead(request):
+        raise HTTPException(403, "organisation admin only")
+    org_id = as_int(request.session.get("org_id"))
+    if not org_id or org_is_locked(org_id):
+        return templates.TemplateResponse(
+            "organisation.html",
+            organisation_home_ctx(request, error="This organisation is locked."),
+            status_code=403,
+        )
+    with db() as conn:
+        cur = conn.cursor()
+        claim_error = claim_device_for_org(cur, org_id, device_id)
+    if claim_error:
+        return templates.TemplateResponse(
+            "organisation.html",
+            organisation_home_ctx(request, error=claim_error),
+            status_code=400,
+        )
+    refresh_session_sites(request)
+    site = normalize_device_id(device_id)
+    return templates.TemplateResponse(
+        "organisation.html",
+        organisation_home_ctx(request, notice=f"Site {site} added."),
+    )
+
+
+@app.post("/organisation/invites", response_class=HTMLResponse)
+def organisation_invite(request: Request, email: str = Form(""), role: str = Form("sub_operator")):
+    if not logged_in(request):
+        return RedirectResponse("/login", status_code=302)
+    if not is_org_lead(request):
+        raise HTTPException(403, "organisation admin only")
+    org_id = as_int(request.session.get("org_id"))
+    mail = normalize_email(email)
+    role_name = normalize_role(role)
+    if not org_id or org_is_locked(org_id):
+        return templates.TemplateResponse(
+            "organisation.html",
+            organisation_home_ctx(request, error="This organisation is locked."),
+            status_code=403,
+        )
+    if not valid_email(mail):
+        return templates.TemplateResponse(
+            "organisation.html",
+            organisation_home_ctx(request, error="Enter a valid email address."),
+            status_code=400,
+        )
+    if find_user_by_email(mail):
+        return templates.TemplateResponse(
+            "organisation.html",
+            organisation_home_ctx(request, error="That email already has an account."),
+            status_code=400,
+        )
+    orgs = load_organisations()
+    org = next((row for row in orgs if int(row["id"]) == org_id), None)
+    org_name = str((org or {}).get("name") or "your organisation")
+    with db() as conn:
+        cur = conn.cursor()
+        token = save_org_invite(cur, org_id, mail, role_name)
+    link = f"{public_base(request)}/invite/{token}"
+    sent = send_invite_email(mail, org_name, role_name, link)
+    if sent:
+        notice = f"Invite emailed to {mail}."
+    else:
+        notice = f"Invite saved. Email is not sending yet. Share this link: {link}"
+    return templates.TemplateResponse(
+        "organisation.html",
+        organisation_home_ctx(request, notice=notice),
+    )
 
 
 @app.get("/login", response_class=HTMLResponse)
