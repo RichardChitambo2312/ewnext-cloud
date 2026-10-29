@@ -3408,8 +3408,23 @@ def organisation_home_ctx(request: Request, error: str | None = None, notice: st
             invites = fetchall(cur)
         sites = org_sites_for(org_id, include_children=False)
     names = {k: v["display_name"] for k, v in load_site_records(sites).items()} if sites else {}
+    viewer_id = as_int(request.session.get("uid"))
+    swatches = (
+        ("#e3f0f7", "#1e6491"),
+        ("#fff6e8", "#9a6700"),
+        ("#e8f9ee", "#166534"),
+        ("#eef2f6", "#334155"),
+    )
     for person in team:
+        person["role_key"] = normalize_role(person.get("role"))
         person["role_label"] = role_label(person.get("role"))
+        person["is_self"] = int(person.get("id") or 0) == viewer_id
+        parts = str(person.get("name") or "").split()
+        letters = "".join(part[0] for part in parts[:2] if part)
+        person["initials"] = letters.upper() or "?"
+        bg, fg = swatches[int(person.get("id") or 0) % len(swatches)]
+        person["avatar_bg"] = bg
+        person["avatar_fg"] = fg
     base = public_base(request)
     for invite in invites:
         invite["role_label"] = role_label(invite.get("role"))
@@ -3431,7 +3446,7 @@ def organisation_home_ctx(request: Request, error: str | None = None, notice: st
 
 
 @app.get("/organisation", response_class=HTMLResponse)
-def organisation_home(request: Request, notice: str = ""):
+def organisation_home(request: Request, notice: str = "", error: str = ""):
     if not logged_in(request):
         return RedirectResponse("/login", status_code=302)
     if is_manager(request):
@@ -3440,7 +3455,7 @@ def organisation_home(request: Request, notice: str = ""):
         return RedirectResponse("/", status_code=302)
     return templates.TemplateResponse(
         "organisation.html",
-        organisation_home_ctx(request, notice=notice or None),
+        organisation_home_ctx(request, notice=notice or None, error=error or None),
     )
 
 
@@ -3468,10 +3483,66 @@ def organisation_add_site(request: Request, device_id: str = Form("")):
         )
     refresh_session_sites(request)
     site = normalize_device_id(device_id)
-    return templates.TemplateResponse(
-        "organisation.html",
-        organisation_home_ctx(request, notice=f"Site {site} added."),
+    return RedirectResponse(f"/organisation?notice={quote('Site ' + site + ' added.')}", status_code=303)
+
+
+@app.post("/organisation/sites/delete")
+def organisation_delete_site(request: Request, device_id: str = Form("")):
+    if not logged_in(request):
+        return RedirectResponse("/login", status_code=302)
+    if not is_org_lead(request):
+        raise HTTPException(403, "organisation admin only")
+    org_id = as_int(request.session.get("org_id"))
+    site = normalize_device_id(device_id)
+    if not org_id or not valid_device_id(site):
+        return RedirectResponse("/organisation?error=" + quote("That site could not be removed."), status_code=303)
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(q("SELECT organisation_id FROM org_sites WHERE device_id=?"), (site,))
+        row = cur.fetchone()
+        owner = int(_row_get(row, "organisation_id", 0) or 0) if row else 0
+        if owner != org_id:
+            return RedirectResponse(
+                "/organisation?error=" + quote("That site is not in this organisation."),
+                status_code=303,
+            )
+        cur.execute(q("DELETE FROM org_sites WHERE organisation_id=? AND device_id=?"), (org_id, site))
+        cur.execute(q("DELETE FROM user_sites WHERE device_id=?"), (site,))
+    refresh_session_sites(request)
+    label = load_site_records([site]).get(site, {}).get("display_name") or site
+    return RedirectResponse(
+        f"/organisation?notice={quote(str(label) + ' was removed from this organisation.')}",
+        status_code=303,
     )
+
+
+@app.post("/organisation/people/{user_id}/delete")
+def organisation_delete_person(request: Request, user_id: int):
+    if not logged_in(request):
+        return RedirectResponse("/login", status_code=302)
+    if not is_org_lead(request):
+        raise HTTPException(403, "organisation admin only")
+    org_id = as_int(request.session.get("org_id"))
+    if as_int(request.session.get("uid")) == user_id:
+        return RedirectResponse(
+            "/organisation?error=" + quote("You can't remove your own account."),
+            status_code=303,
+        )
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(q("SELECT id, name, organisation_id FROM app_users WHERE id=?"), (user_id,))
+        row = cur.fetchone()
+        person = _sql_row(row, cur)
+        if not person or as_int(person.get("organisation_id")) != org_id:
+            return RedirectResponse(
+                "/organisation?error=" + quote("That person is not in this organisation."),
+                status_code=303,
+            )
+        cur.execute(q("DELETE FROM user_sites WHERE user_id=?"), (user_id,))
+        cur.execute(q("DELETE FROM password_resets WHERE user_id=?"), (user_id,))
+        cur.execute(q("DELETE FROM app_users WHERE id=? AND organisation_id=?"), (user_id, org_id))
+    name = str(person.get("name") or "User")
+    return RedirectResponse(f"/organisation?notice={quote(name + ' was removed.')}", status_code=303)
 
 
 @app.post("/organisation/invites", response_class=HTMLResponse)

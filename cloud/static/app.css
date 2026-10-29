@@ -2248,13 +2248,210 @@ th {
   display: block;
   width: 100%;
   box-sizing: border-box;
-  margin: 0 0 8px;
+  margin: 6px 0 0;
   padding: 4px 8px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--fog);
   color: var(--ink);
   font-size: 0.72rem;
+}
+
+.org-stage {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  align-items: start;
+}
+
+.org-col {
+  background: var(--panel);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  padding: 16px 16px 14px;
+  min-width: 0;
+}
+
+.org-col-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.org-col-head .eyebrow {
+  margin: 0 0 2px;
+}
+
+.org-col-head h2 {
+  margin: 0;
+  font-size: 1.35rem;
+  letter-spacing: -0.03em;
+}
+
+.org-count {
+  min-width: 1.7rem;
+  height: 1.7rem;
+  padding: 0 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--brand-blue-soft);
+  color: var(--nav-deep);
+  font-family: var(--font-heading);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.roster {
+  display: grid;
+  gap: 8px;
+}
+
+.roster-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 10px 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #fff 0%, #f8fafc 100%);
+}
+
+.roster-card.is-admin {
+  background: linear-gradient(180deg, #fff 0%, #f3fbf6 100%);
+}
+
+.roster-card.is-invite {
+  grid-template-columns: auto minmax(0, 1fr);
+  background: #fff;
+}
+
+.roster-mark,
+.roster-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.roster-mark {
+  background: var(--brand-blue-soft);
+  color: var(--nav-deep);
+}
+
+.roster-avatar {
+  font-family: var(--font-heading);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.roster-avatar.is-invite {
+  background: var(--warn-soft);
+  color: #9a6700;
+}
+
+.roster-copy {
+  min-width: 0;
+}
+
+.roster-title {
+  margin: 0;
+  font-family: var(--font-heading);
+  font-size: 0.95rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+}
+
+a.roster-title:hover {
+  color: var(--nav-deep);
+}
+
+.roster-copy .muted {
+  margin: 2px 0 0;
+  font-size: 0.75rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.roster-side {
+  display: grid;
+  justify-items: end;
+  gap: 6px;
+}
+
+.you-chip {
+  display: inline-flex;
+  margin-left: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--brand-blue-soft);
+  color: var(--nav-deep);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: 1px;
+}
+
+.roster-empty {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.org-subhead {
+  margin: 16px 0 8px;
+  font-size: 0.95rem;
+}
+
+.org-add {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.org-add-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.org-add-row input,
+.org-add-row select {
+  min-width: 0;
+}
+
+.org-add-row input {
+  flex: 1;
+}
+
+.org-add-row .primary-btn {
+  flex: 0 0 auto;
+}
+
+.danger-btn {
+  border: 1px solid rgba(239, 68, 68, 0.28);
+  background: #fff;
+  color: #b91c1c;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.danger-btn:hover {
+  background: var(--alarm-soft);
+  border-color: rgba(239, 68, 68, 0.45);
 }
 
 .user-list {
@@ -2387,8 +2584,18 @@ th {
 
   .dash-split,
   .user-layout,
-  .org-toolbar {
+  .org-toolbar,
+  .org-stage {
     grid-template-columns: 1fr;
+  }
+
+  .org-add-row {
+    flex-wrap: wrap;
+  }
+
+  .org-add-row .primary-btn,
+  .org-add-row select {
+    width: auto;
   }
 }
 
@@ -2642,6 +2849,18 @@ th {
     width: auto;
     min-height: 32px;
     flex: 1;
+  }
+
+  .org-add-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .org-add-row input,
+  .org-add-row select,
+  .org-add-row .primary-btn {
+    width: 100%;
+    min-height: 44px;
   }
 
   .instrument-grid {

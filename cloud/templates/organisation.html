@@ -5,64 +5,116 @@
           <div>
             <p class="eyebrow">Under the main organisation</p>
             <h1>{{ org.name if org else "Organisation" }}</h1>
-            <p class="page-sub">Add a site with the gateway Device ID, and invite people into this organisation.</p>
+            <p class="page-sub">Sites in this organisation, and the people who can open them.</p>
           </div>
         </div>
         {% if notice %}<p class="notice">{{ notice }}</p>{% endif %}
         {% if error %}<p class="error">{{ error }}</p>{% endif %}
 
-        <section class="user-layout">
-          <article class="panel user-form-card">
-            <h2>Add a site</h2>
-            <form method="post" action="/organisation/sites" class="user-form">
-              <label for="device_id">Device ID</label>
-              <input id="device_id" name="device_id" maxlength="64" required placeholder="Unique ID from the gateway">
-              <p class="muted">Each Device ID can belong to one organisation.</p>
-              <button class="primary-btn" type="submit">Add site</button>
-            </form>
-            <h2>Invite a user</h2>
-            <form method="post" action="/organisation/invites" class="user-form">
-              <label for="email">Email</label>
-              <input id="email" name="email" type="email" maxlength="120" required>
-              <label for="role">Role</label>
-              <select id="role" name="role">
-                <option value="sub_operator">Operator</option>
-                <option value="org_admin">Organisation administrator</option>
-              </select>
-              <button class="primary-btn" type="submit">Send invite</button>
+        <section class="org-stage">
+          <article class="org-col">
+            <header class="org-col-head">
+              <div>
+                <p class="eyebrow">Places</p>
+                <h2>Sites</h2>
+              </div>
+              <span class="org-count">{{ sites|length }}</span>
+            </header>
+            {% if sites %}
+            <div class="roster">
+              {% for site in sites %}
+              <article class="roster-card">
+                <span class="roster-mark" aria-hidden="true">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11Z"/><circle cx="12" cy="10" r="2.2"/></svg>
+                </span>
+                <div class="roster-copy">
+                  <a class="roster-title" href="/sites/{{ site }}">{{ site_names.get(site, site) }}</a>
+                  <p class="muted">Device ID {{ site }}</p>
+                </div>
+                {% if is_org_lead %}
+                <form method="post" action="/organisation/sites/delete" onsubmit="return confirm({{ ('Remove ' ~ site_names.get(site, site) ~ ' from this organisation? People here will lose access to this site.')|tojson }});">
+                  <input type="hidden" name="device_id" value="{{ site }}">
+                  <button class="danger-btn" type="submit">Remove</button>
+                </form>
+                {% endif %}
+              </article>
+              {% endfor %}
+            </div>
+            {% else %}
+            <p class="roster-empty">No sites yet. Add the Device ID from the gateway.</p>
+            {% endif %}
+            <form method="post" action="/organisation/sites" class="org-add user-form">
+              <label for="device_id">Add a site</label>
+              <div class="org-add-row">
+                <input id="device_id" name="device_id" maxlength="64" required placeholder="Device ID from the gateway">
+                <button class="primary-btn" type="submit">Add</button>
+              </div>
             </form>
           </article>
-          <div class="user-list">
-            <article class="panel">
-              <h2>Sites</h2>
-              {% if sites %}
-              <ul>
-                {% for site in sites %}
-                <li><a href="/sites/{{ site }}">{{ site_names.get(site, site) }}</a></li>
-                {% endfor %}
-              </ul>
-              {% else %}
-              <p class="muted">No sites yet. Add the gateway Device ID.</p>
-              {% endif %}
-            </article>
-            <article class="panel">
-              <h2>People</h2>
+
+          <article class="org-col">
+            <header class="org-col-head">
+              <div>
+                <p class="eyebrow">Access</p>
+                <h2>People</h2>
+              </div>
+              <span class="org-count">{{ team|length }}</span>
+            </header>
+            {% if team %}
+            <div class="roster">
               {% for person in team %}
-              <p><strong>{{ person.name }}</strong> · {{ person.email }} · {{ person.role_label }}</p>
-              {% else %}
-              <p class="muted">No people yet.</p>
+              <article class="roster-card{% if person.role_key == 'org_admin' %} is-admin{% endif %}">
+                <span class="roster-avatar" style="background: {{ person.avatar_bg }}; color: {{ person.avatar_fg }}" aria-hidden="true">{{ person.initials }}</span>
+                <div class="roster-copy">
+                  <p class="roster-title">{{ person.name }}{% if person.is_self %} <span class="you-chip">You</span>{% endif %}</p>
+                  <p class="muted">{{ person.email }}</p>
+                </div>
+                <div class="roster-side">
+                  <span class="status {{ 'done' if person.role_key == 'org_admin' else 'pending' }}">{{ "Admin" if person.role_key == "org_admin" else "Operator" }}</span>
+                  {% if is_org_lead and not person.is_self %}
+                  <form method="post" action="/organisation/people/{{ person.id }}/delete" onsubmit="return confirm({{ ('Remove ' ~ person.name ~ '? They will not be able to sign in.')|tojson }});">
+                    <button class="danger-btn" type="submit">Remove</button>
+                  </form>
+                  {% endif %}
+                </div>
+              </article>
               {% endfor %}
-              {% if invites %}
-              <h2>Invites waiting</h2>
+            </div>
+            {% else %}
+            <p class="roster-empty">No people yet.</p>
+            {% endif %}
+
+            {% if invites %}
+            <h3 class="org-subhead">Invites waiting</h3>
+            <div class="roster">
               {% for invite in invites %}
-              <p class="invite-wait"><strong>{{ invite.email }}</strong> · {{ invite.role_label }}</p>
-              {% if invite.link %}
-              <a class="invite-open" href="{{ invite.link }}">Open invite</a>
-              <input class="invite-link" readonly value="{{ invite.link }}" onclick="this.select()" aria-label="Invite link for {{ invite.email }}">
-              {% endif %}
+              <article class="roster-card is-invite">
+                <span class="roster-avatar is-invite" aria-hidden="true">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16v10H4z"/><path d="m4 7 8 6 8-6"/></svg>
+                </span>
+                <div class="roster-copy">
+                  <p class="roster-title">{{ invite.email }}</p>
+                  <p class="muted">{{ "Admin" if invite.role == "org_admin" else "Operator" }} · link ready</p>
+                  {% if invite.link %}
+                  <input class="invite-link" readonly value="{{ invite.link }}" onclick="this.select()" aria-label="Invite link for {{ invite.email }}">
+                  {% endif %}
+                </div>
+              </article>
               {% endfor %}
-              {% endif %}
-            </article>
-          </div>
+            </div>
+            {% endif %}
+
+            <form method="post" action="/organisation/invites" class="org-add user-form">
+              <label for="email">Invite a person</label>
+              <div class="org-add-row">
+                <input id="email" name="email" type="email" maxlength="120" required placeholder="Email address">
+                <select id="role" name="role" aria-label="Role">
+                  <option value="sub_operator">Operator</option>
+                  <option value="org_admin">Administrator</option>
+                </select>
+                <button class="primary-btn" type="submit">Invite</button>
+              </div>
+            </form>
+          </article>
         </section>
 {% endblock %}
