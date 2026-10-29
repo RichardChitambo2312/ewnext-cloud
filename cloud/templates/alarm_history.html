@@ -57,7 +57,10 @@
 
         <section class="panel alarm-history-panel" aria-label="Alarm history">
           <div class="alarm-history-head">
-            <h2>Alarm history</h2>
+            <div>
+              <h2>Alarm history</h2>
+              <p class="muted">Times are South Africa standard time (GMT+2).</p>
+            </div>
             <a class="text-link" href="{{ inst.href }}">Edit alarm settings</a>
           </div>
           {% if not alarm_events %}

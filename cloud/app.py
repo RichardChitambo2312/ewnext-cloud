@@ -1063,7 +1063,7 @@ def send_alarm_email(inst: dict, temp: float, high: float) -> bool:
         f"Address: {inst.get('instrument_id')}\n"
         f"Temperature: {format_temp(temp)}\n"
         f"High alarm: {format_temp(high)}\n"
-        f"Time (UTC): {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"Time (South Africa, GMT+2): {datetime.now(SA_TZ).strftime('%Y-%m-%d %H:%M:%S')}\n"
     )
     return _deliver_email(recipients, subject, body)
 
@@ -1333,11 +1333,21 @@ def format_temp(value: Any) -> str:
     return f"{n:.1f}°C"
 
 
+SA_TZ = timezone(timedelta(hours=2))
+
+
 def format_when(value: Any) -> str:
     dt = parse_ts(value)
     if dt is None:
         return "—"
     return dt.strftime("%d %b %Y %H:%M UTC")
+
+
+def format_alarm_when(value: Any) -> str:
+    dt = parse_ts(value)
+    if dt is None:
+        return "—"
+    return dt.astimezone(SA_TZ).strftime("%d %b %Y %H:%M SAST")
 
 
 def format_duration(start: datetime | None, end: datetime | None) -> str:
@@ -1761,15 +1771,15 @@ def decorate_alarm_event(row: dict, now: datetime | None = None) -> dict:
             "active": active,
             "status_label": "Active" if active else "Cleared",
             "status_kind": "active" if active else "cleared",
-            "started_label": format_when(started),
-            "cleared_label": "—" if active else format_when(cleared),
+            "started_label": format_alarm_when(started),
+            "cleared_label": "—" if active else format_alarm_when(cleared),
             "duration_label": format_duration(started, end),
             "peak_label": format_temp(row.get("peak_temp")),
             "start_temp_label": format_temp(row.get("start_temp")),
             "clear_temp_label": format_temp(row.get("clear_temp")),
             "high_label": format_temp(row.get("high_temp")),
             "reset_label": format_temp(row.get("reset_temp")),
-            "email_label": format_when(row.get("email_sent_at")) if emailed else "Not sent",
+            "email_label": format_alarm_when(row.get("email_sent_at")) if emailed else "Not sent",
         }
     )
     return row
