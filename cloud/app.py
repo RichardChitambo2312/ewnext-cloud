@@ -20,7 +20,7 @@ from typing import Any, Iterator
 from urllib.parse import quote
 
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
@@ -285,6 +285,28 @@ def init_db() -> None:
                 created_at {ts} NOT NULL,
                 expires_at {ts} NOT NULL,
                 used_at {ts}
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS push_vapid (
+                id INTEGER PRIMARY KEY,
+                public_key TEXT NOT NULL,
+                private_key TEXT NOT NULL
+            )
+            """
+        )
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS push_subscriptions (
+                id {serial},
+                user_id INTEGER,
+                super_admin INTEGER NOT NULL DEFAULT 0,
+                endpoint TEXT NOT NULL UNIQUE,
+                p256dh TEXT NOT NULL,
+                auth TEXT NOT NULL,
+                created_at {ts} NOT NULL
             )
             """
         )
@@ -1250,6 +1272,61 @@ def build_offline_history(cur, inst: dict, now: datetime) -> None:
     inst["offline_history_built"] = 1
 
 
+def _push_site_label(cur, device_id: str) -> str:
+    cur.execute(q("SELECT store_name FROM sites WHERE device_id=?"), (device_id,))
+    row = cur.fetchone()
+    name = str(_row_get(row, "store_name", 0) or "").strip() if row else ""
+    return name or str(device_id or "")
+
+
+def _other_instruments_online(cur, device_id: str, instrument_id: Any, now: datetime) -> int:
+    cur.execute(
+        q("SELECT instrument_id, last_seen, last_stale FROM instruments WHERE device_id=?"),
+        (device_id,),
+    )
+    count = 0
+    current = int(instrument_id or 0)
+    for row in fetchall(cur):
+        if int(row.get("instrument_id") or 0) == current:
+            continue
+        if instrument_online(row, now):
+            count += 1
+    return count
+
+
+def _other_open_offline(cur, device_id: str, instrument_id: Any) -> int:
+    cur.execute(
+        q(
+            """
+            SELECT COUNT(*) AS n FROM alarm_events
+            WHERE device_id=? AND instrument_id<>? AND cleared_at IS NULL
+              AND COALESCE(kind, 'high')='offline'
+            """
+        ),
+        (device_id, int(instrument_id or 0)),
+    )
+    row = cur.fetchone()
+    return int(_row_get(row, "n", 0) or 0) if row else 0
+
+
+def _push_event(device_id: str, title: str, body: str, url: str, tag: str) -> None:
+    try:
+        import push_notify
+
+        push_notify.enqueue(device_id, title, body, url, tag)
+    except Exception:
+        return
+
+
+def _instrument_push_target(cur, inst: dict) -> tuple[str, str, str]:
+    device_id = str(inst.get("device_id") or "")
+    instrument_id = int(inst.get("instrument_id") or 0)
+    name = display_name(inst.get("label"), inst.get("server_name"), instrument_id)
+    site = _push_site_label(cur, device_id)
+    url = f"/instrument/{instrument_id}?device={quote(device_id, safe='')}"
+    return name, site, url
+
+
 def record_offline_history(cur, inst: dict, now: datetime) -> None:
     device_id = inst.get("device_id")
     instrument_id = inst.get("instrument_id")
@@ -1269,12 +1346,52 @@ def record_offline_history(cur, inst: dict, now: datetime) -> None:
                 ),
                 (device_id, instrument_id, offline_started_at(inst, now).isoformat()),
             )
+            name, site, url = _instrument_push_target(cur, inst)
+            import push_notify
+
+            if _other_instruments_online(cur, str(device_id), instrument_id, now) == 0:
+                if push_notify.claim_device_offline(str(device_id)):
+                    _push_event(
+                        str(device_id),
+                        "Device offline",
+                        f"{site} has stopped reporting.",
+                        f"/sites/{quote(str(device_id), safe='')}",
+                        f"device-offline:{device_id}",
+                    )
+            else:
+                _push_event(
+                    str(device_id),
+                    "Instrument offline",
+                    f"{name} at {site} has stopped reporting.",
+                    url,
+                    f"offline:{device_id}:{instrument_id}",
+                )
         return
     if open_row is not None:
         cur.execute(
             q("UPDATE alarm_events SET cleared_at=? WHERE id=?"),
             (now.isoformat(), open_row["id"]),
         )
+        name, site, url = _instrument_push_target(cur, inst)
+        import push_notify
+
+        if _other_open_offline(cur, str(device_id), instrument_id) == 0 and push_notify.device_was_offline(str(device_id)):
+            push_notify.release_device_offline(str(device_id))
+            _push_event(
+                str(device_id),
+                "Device online",
+                f"{site} is reporting again.",
+                f"/sites/{quote(str(device_id), safe='')}",
+                f"device-offline:{device_id}",
+            )
+        elif not push_notify.device_was_offline(str(device_id)):
+            _push_event(
+                str(device_id),
+                "Instrument online",
+                f"{name} at {site} is reporting again.",
+                url,
+                f"offline:{device_id}:{instrument_id}",
+            )
 
 
 def persist_cloud_alarm(cur, inst: dict, active: bool, high_since: datetime | None, active_since: datetime | None, emailed: bool) -> None:
@@ -1362,6 +1479,24 @@ def apply_cloud_alarm(cur, inst: dict, now: datetime | None = None) -> dict:
         reset=None if high is None else reset,
         started_at=next_active_since,
     )
+    if high is not None and next_active != active:
+        name, site, url = _instrument_push_target(cur, inst)
+        if next_active:
+            _push_event(
+                str(inst.get("device_id") or ""),
+                "High temperature",
+                f"{name} at {site} is {format_temp(temp)}.",
+                url,
+                f"alarm:{inst.get('device_id')}:{inst.get('instrument_id')}",
+            )
+        else:
+            _push_event(
+                str(inst.get("device_id") or ""),
+                "Alarm cleared",
+                f"{name} at {site} is back to normal.",
+                url,
+                f"alarm:{inst.get('device_id')}:{inst.get('instrument_id')}",
+            )
     record_offline_history(cur, inst, now)
 
     inst["alarm_active"] = 1 if next_active else 0
@@ -1953,6 +2088,12 @@ def on_startup() -> None:
     if os.environ.get("RENDER") == "true" and not _is_pg():
         raise RuntimeError("DATABASE_URL is required on Render so names and settings persist across deploys")
     init_db()
+    try:
+        import push_notify
+
+        push_notify.start()
+    except Exception:
+        pass
 
 
 @app.get("/health")
@@ -1962,6 +2103,58 @@ def health() -> dict:
         "service": "ewnext-cloud",
         "store": "postgres" if _is_pg() else "sqlite",
     }
+
+
+@app.get("/manifest.webmanifest")
+def web_manifest():
+    return FileResponse(
+        STATIC_DIR / "manifest.webmanifest",
+        media_type="application/manifest+json",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
+@app.get("/sw.js")
+def service_worker():
+    return FileResponse(
+        STATIC_DIR / "sw.js",
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"},
+    )
+
+
+@app.get("/api/push/public-key")
+def push_public_key(request: Request):
+    if not logged_in(request):
+        raise HTTPException(401, "login required")
+    import push_notify
+
+    return {"publicKey": push_notify.public_application_key()}
+
+
+@app.post("/api/push/subscribe")
+async def push_subscribe(request: Request):
+    if not logged_in(request):
+        raise HTTPException(401, "login required")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(400, "invalid json")
+    if not isinstance(body, dict):
+        raise HTTPException(400, "invalid json")
+    endpoint = str(body.get("endpoint") or "").strip()
+    keys = body.get("keys") if isinstance(body.get("keys"), dict) else {}
+    p256dh = str(keys.get("p256dh") or "").strip()
+    auth = str(keys.get("auth") or "").strip()
+    if not endpoint.startswith("https://") or not p256dh or not auth:
+        raise HTTPException(400, "invalid subscription")
+    if len(endpoint) > 2000 or len(p256dh) > 300 or len(auth) > 300:
+        raise HTTPException(400, "invalid subscription")
+    import push_notify
+
+    uid = as_int(request.session.get("uid"))
+    push_notify.save_subscription(uid, is_super_admin(request), endpoint, p256dh, auth)
+    return {"ok": True}
 
 
 @app.post("/api/modbus")
@@ -2017,13 +2210,16 @@ async def ingest(request: Request) -> JSONResponse:
             ),
         )
         cur.execute(
-            q("SELECT last_setpoint FROM instruments WHERE device_id=? AND instrument_id=?"),
+            q("SELECT last_setpoint, last_flags FROM instruments WHERE device_id=? AND instrument_id=?"),
             (device_id, instrument_id),
         )
-        prev = cur.fetchone()
+        prev = _sql_row(cur.fetchone(), cur)
         last_setpoint = live_setpoint
-        if last_setpoint is None and prev:
-            last_setpoint = prev[0] if not isinstance(prev, dict) else prev.get("last_setpoint")
+        old_flags = None
+        if prev:
+            if last_setpoint is None:
+                last_setpoint = prev.get("last_setpoint")
+            old_flags = prev.get("last_flags")
         stale = 1 if body.get("stale") else 0
         frozen_label = display_name(None, body.get("server_name"), instrument_id)
         if site_accepts_instrument(cur, device_id, instrument_id):
@@ -2061,9 +2257,30 @@ async def ingest(request: Request) -> JSONResponse:
             (device_id, instrument_id),
         )
         found = cur.fetchone()
-        if found:
-            inst = dict(found) if isinstance(found, dict) or hasattr(found, "keys") else {}
+        inst = _sql_row(found, cur) if found else None
+        if inst:
             apply_cloud_alarm(cur, inst)
+            if not body.get("stale") and old_flags is not None and flags is not None:
+                was_on = decode_flags(old_flags)["defrost_active"]
+                now_on = decode_flags(flags)["defrost_active"]
+                if was_on != now_on:
+                    name, site, push_url = _instrument_push_target(cur, inst)
+                    if now_on:
+                        _push_event(
+                            device_id,
+                            "Defrost",
+                            f"{name} at {site} is in defrost.",
+                            push_url,
+                            f"defrost:{device_id}:{instrument_id}",
+                        )
+                    else:
+                        _push_event(
+                            device_id,
+                            "Defrost finished",
+                            f"{name} at {site} has finished defrost.",
+                            push_url,
+                            f"defrost:{device_id}:{instrument_id}",
+                        )
             cur.execute(
                 q(
                     """
@@ -3845,8 +4062,8 @@ def set_instrument_alarms(
             (device_id, instrument_id),
         )
         found = cur.fetchone()
-        if found:
-            inst = dict(found) if isinstance(found, dict) or hasattr(found, "keys") else {}
+        inst = _sql_row(found, cur) if found else None
+        if inst:
             apply_cloud_alarm(cur, inst)
     if _wants_json(request):
         return JSONResponse(

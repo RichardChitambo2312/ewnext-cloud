@@ -2052,6 +2052,30 @@ th {
   color: #92400e;
 }
 
+.push-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  margin: 0 0 16px;
+  background: var(--brand-blue-soft);
+  color: var(--nav-deep);
+  font-size: 0.88rem;
+}
+
+.push-banner[hidden],
+.push-banner [hidden] {
+  display: none !important;
+}
+
+.push-banner .primary-btn,
+.push-banner .ghost-btn {
+  min-height: 36px;
+  padding: 6px 12px;
+}
+
 .lock-banner a,
 .due-banner a {
   font-weight: 700;
