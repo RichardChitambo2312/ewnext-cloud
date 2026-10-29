@@ -3422,6 +3422,16 @@ def forgot_submit(request: Request, email: str = Form("")):
     if logged_in(request):
         return RedirectResponse("/", status_code=302)
     mail = normalize_email(email)
+    if not smtp_configured():
+        return templates.TemplateResponse(
+            "forgot.html",
+            {
+                "request": request,
+                "error": "Password reset email is not set up yet. Ask your organisation administrator for a new password.",
+                "notice": None,
+            },
+            status_code=503,
+        )
     notice = "If that email has an account, a reset link is on its way. It expires in 2 hours."
     if not valid_email(mail):
         return templates.TemplateResponse(
