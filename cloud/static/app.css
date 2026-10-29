@@ -1161,6 +1161,46 @@ th {
   width: 100%;
 }
 
+.pw-field {
+  position: relative;
+}
+
+.pw-field input {
+  padding-right: 44px;
+}
+
+.pw-toggle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 42px;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  padding: 0;
+}
+
+.pw-toggle:hover,
+.pw-toggle.is-on {
+  color: var(--nav);
+}
+
+.pw-toggle .eye-off {
+  display: none;
+}
+
+.pw-toggle.is-on .eye-open {
+  display: none;
+}
+
+.pw-toggle.is-on .eye-off {
+  display: block;
+}
+
 .login-card-wide {
   width: min(480px, calc(100% - 32px));
 }
@@ -2129,6 +2169,10 @@ th {
   background: var(--fog);
   width: 100%;
   max-width: 100%;
+}
+
+.user-form .pw-field input {
+  padding-right: 44px;
 }
 
 .user-form .primary-btn {

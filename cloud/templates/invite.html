@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#2980b9">
   <title>Keyview Cloud — Join</title>
-  <link rel="stylesheet" href="/static/app.css?v=login2">
+  <link rel="stylesheet" href="/static/app.css?v=login3">
 </head>
 <body class="login-body">
   <main class="login-card">
@@ -18,12 +18,16 @@
       <label for="name">Name</label>
       <input id="name" name="name" maxlength="80" required autocomplete="name">
       <label for="password">Password</label>
-      <input id="password" name="password" type="password" minlength="8" required autocomplete="new-password">
+      <div class="pw-field">
+        <input id="password" name="password" type="password" minlength="8" required autocomplete="new-password">
+        {% include "password_eye.html" %}
+      </div>
       <button class="primary-btn" type="submit">Join</button>
     </form>
     {% else %}
     <p class="login-switch"><a href="/login">Back to sign in</a></p>
     {% endif %}
   </main>
+  <script src="/static/password.js?v=login3"></script>
 </body>
 </html>

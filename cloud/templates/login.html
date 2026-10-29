@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <title>Keyview Cloud — Sign in</title>
-  <link rel="stylesheet" href="/static/app.css?v=login2">
+  <link rel="stylesheet" href="/static/app.css?v=login3">
 </head>
 <body class="login-body">
   <main class="login-card">
@@ -18,11 +18,15 @@
       <label for="email">Email</label>
       <input id="email" name="email" type="text" autocomplete="username" placeholder="admin">
       <label for="password">Password</label>
-      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <div class="pw-field">
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+        {% include "password_eye.html" %}
+      </div>
       <p class="login-forgot"><a href="/forgot">Forgot password?</a></p>
       <button class="primary-btn" type="submit">Sign in</button>
     </form>
     <p class="login-switch">New organisation? <a href="/signup">Create an account</a></p>
   </main>
+  <script src="/static/password.js?v=login3"></script>
 </body>
 </html>
