@@ -14,7 +14,7 @@
               {% include "pen_btn.html" %}
             </form>
             <p class="page-sub">
-              Cloud high-temperature alarm history for address {{ inst.instrument_id }}.
+              Cloud high-temperature and offline history for address {{ inst.instrument_id }}.
               <span class="online-flag">
                 <span class="dot {% if inst.online %}dot-online{% else %}dot-offline{% endif %}"></span>
                 {{ "Online" if inst.online else "Offline" }}
@@ -64,12 +64,13 @@
             <a class="text-link" href="{{ inst.href }}">Edit alarm settings</a>
           </div>
           {% if not alarm_events %}
-          <p class="muted">No cloud alarms recorded yet. History starts when temperature stays above the high alarm for the configured delay.</p>
+          <p class="muted">No alarms recorded yet. High-temperature alarms appear after the configured delay. Offline periods appear when a controller stops reporting.</p>
           {% else %}
           <div class="table-wrap">
             <table class="alarm-history-table">
               <thead>
                 <tr>
+                  <th>Type</th>
                   <th>Status</th>
                   <th>Started</th>
                   <th>Cleared</th>
@@ -82,6 +83,7 @@
               <tbody>
               {% for event in alarm_events %}
                 <tr class="alarm-row-{{ event.status_kind }}">
+                  <td>{{ event.kind_label }}</td>
                   <td><span class="status alarm-{{ event.status_kind }}">{{ event.status_label }}</span></td>
                   <td>{{ event.started_label }}</td>
                   <td>{{ event.cleared_label }}</td>

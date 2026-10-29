@@ -1428,7 +1428,18 @@ th {
   color: var(--muted);
 }
 
-.alarm-row-active td {
+.alarm-history-table .status.alarm-offline {
+  background: #e8edf3;
+  color: #475569;
+}
+
+.alarm-history-table .status.alarm-restored {
+  background: var(--ok-soft);
+  color: #15803d;
+}
+
+.alarm-row-active td,
+.alarm-row-offline td {
   font-weight: 600;
 }
 

@@ -175,6 +175,7 @@ def init_db() -> None:
         _ensure_column(cur, "instruments", "alarm_active", "INTEGER DEFAULT 0")
         _ensure_column(cur, "instruments", "alarm_active_since", ts)
         _ensure_column(cur, "instruments", "alarm_email_sent", "INTEGER DEFAULT 0")
+        _ensure_column(cur, "instruments", "offline_history_built", "INTEGER DEFAULT 0")
         _ensure_column(cur, "readings", "cloud_alarm", "INTEGER DEFAULT 0")
         cur.execute(
             f"""
@@ -197,6 +198,7 @@ def init_db() -> None:
         cur.execute(
             "CREATE INDEX IF NOT EXISTS alarm_events_lookup ON alarm_events (device_id, instrument_id, started_at)"
         )
+        _ensure_column(cur, "alarm_events", "kind", "TEXT DEFAULT 'high'")
         _ensure_column(cur, "readings", "register_address", "INTEGER")
         _ensure_column(cur, "readings", "value", "TEXT")
         _ensure_column(cur, "readings", "raw_data", "TEXT")
@@ -1001,7 +1003,8 @@ INSTRUMENT_SELECT = """
             SELECT device_id, instrument_id, server_name, label, last_probe1, last_probe2,
                    last_setpoint, last_flags, last_stale, last_seen,
                    alarm_high_temp, alarm_high_delay_min, alarm_reset_temp, alarm_notify_delay_min,
-                   alarm_high_since, alarm_active, alarm_active_since, alarm_email_sent
+                   alarm_high_since, alarm_active, alarm_active_since, alarm_email_sent,
+                   offline_history_built
             FROM instruments
 """
 
@@ -1093,18 +1096,19 @@ def _sql_row(row: Any, cur=None) -> dict | None:
     return None
 
 
-def open_alarm_event(cur, device_id: Any, instrument_id: Any) -> dict | None:
+def open_alarm_event(cur, device_id: Any, instrument_id: Any, kind: str = "high") -> dict | None:
     cur.execute(
         q(
             """
-            SELECT id, peak_temp, email_sent
+            SELECT id, peak_temp, email_sent, kind
             FROM alarm_events
             WHERE device_id=? AND instrument_id=? AND cleared_at IS NULL
+              AND COALESCE(kind, 'high')=?
             ORDER BY started_at DESC
             LIMIT 1
             """
         ),
-        (device_id, instrument_id),
+        (device_id, instrument_id, kind),
     )
     return _sql_row(cur.fetchone(), cur)
 
@@ -1133,8 +1137,8 @@ def record_alarm_history(
                     """
                     INSERT INTO alarm_events (
                         device_id, instrument_id, started_at, peak_temp, start_temp,
-                        high_temp, reset_temp, email_sent, email_sent_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        high_temp, reset_temp, email_sent, email_sent_at, kind
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'high')
                     """
                 ),
                 (
@@ -1181,6 +1185,95 @@ def record_alarm_history(
         cur.execute(
             q("UPDATE alarm_events SET cleared_at=?, clear_temp=? WHERE id=?"),
             (now.isoformat(), temp, open_row["id"]),
+        )
+
+
+OFFLINE_AFTER_SEC = 180
+
+
+def offline_started_at(inst: dict, now: datetime) -> datetime:
+    seen = parse_ts(inst.get("last_seen"))
+    if seen is None:
+        return now
+    start = seen + timedelta(seconds=OFFLINE_AFTER_SEC)
+    if start > now:
+        return now
+    return start
+
+
+def build_offline_history(cur, inst: dict, now: datetime) -> None:
+    if int(inst.get("offline_history_built") or 0):
+        return
+    device_id = inst.get("device_id")
+    instrument_id = inst.get("instrument_id")
+    if device_id is None or instrument_id is None:
+        return
+    cur.execute(
+        q(
+            """
+            SELECT COALESCE(created_at, received_at) AS ts
+            FROM readings
+            WHERE device_id=? AND instrument_id=?
+            ORDER BY received_at ASC
+            """
+        ),
+        (device_id, instrument_id),
+    )
+    previous = None
+    gaps: list[tuple[datetime, datetime]] = []
+    for row in fetchall(cur):
+        stamp = parse_ts(row.get("ts"))
+        if stamp is None:
+            continue
+        if previous is not None and (stamp - previous).total_seconds() > OFFLINE_AFTER_SEC:
+            start = previous + timedelta(seconds=OFFLINE_AFTER_SEC)
+            if stamp > start:
+                gaps.append((start, stamp))
+        previous = stamp
+    if len(gaps) > 200:
+        gaps = gaps[-200:]
+    for start, end in gaps:
+        cur.execute(
+            q(
+                """
+                INSERT INTO alarm_events (
+                    device_id, instrument_id, started_at, cleared_at, email_sent, kind
+                ) VALUES (?, ?, ?, ?, 0, 'offline')
+                """
+            ),
+            (device_id, instrument_id, start.isoformat(), end.isoformat()),
+        )
+    cur.execute(
+        q("UPDATE instruments SET offline_history_built=1 WHERE device_id=? AND instrument_id=?"),
+        (device_id, instrument_id),
+    )
+    inst["offline_history_built"] = 1
+
+
+def record_offline_history(cur, inst: dict, now: datetime) -> None:
+    device_id = inst.get("device_id")
+    instrument_id = inst.get("instrument_id")
+    if device_id is None or instrument_id is None:
+        return
+    build_offline_history(cur, inst, now)
+    open_row = open_alarm_event(cur, device_id, instrument_id, "offline")
+    if not instrument_online(inst, now):
+        if open_row is None:
+            cur.execute(
+                q(
+                    """
+                    INSERT INTO alarm_events (
+                        device_id, instrument_id, started_at, email_sent, kind
+                    ) VALUES (?, ?, ?, 0, 'offline')
+                    """
+                ),
+                (device_id, instrument_id, offline_started_at(inst, now).isoformat()),
+            )
+        return
+    if open_row is not None:
+        cur.execute(
+            q("UPDATE alarm_events SET cleared_at=? WHERE id=?"),
+            (now.isoformat(), open_row["id"]),
         )
 
 
@@ -1269,6 +1362,7 @@ def apply_cloud_alarm(cur, inst: dict, now: datetime | None = None) -> dict:
         reset=None if high is None else reset,
         started_at=next_active_since,
     )
+    record_offline_history(cur, inst, now)
 
     inst["alarm_active"] = 1 if next_active else 0
     inst["alarm_high_since"] = next_high_since.isoformat() if next_high_since else None
@@ -1430,13 +1524,14 @@ def parse_ts(value: Any) -> datetime | None:
     return dt.astimezone(timezone.utc)
 
 
-def instrument_online(row: dict) -> bool:
+def instrument_online(row: dict, now: datetime | None = None) -> bool:
+    now = now or datetime.now(timezone.utc)
     if int(row.get("last_stale") or 0):
         return False
     seen = parse_ts(row.get("last_seen"))
     if seen is None:
         return False
-    return (datetime.now(timezone.utc) - seen).total_seconds() < 180
+    return (now - seen).total_seconds() < 180
 
 
 def relative_ago(value: Any) -> str:
@@ -1778,20 +1873,33 @@ def decorate_alarm_event(row: dict, now: datetime | None = None) -> dict:
     active = cleared is None
     end = cleared or now
     emailed = bool(int(row.get("email_sent") or 0))
+    kind = str(row.get("kind") or "high")
+    if kind == "offline":
+        status_label = "Offline" if active else "Back online"
+        status_kind = "offline" if active else "restored"
+        kind_label = "Offline"
+        email_label = "—"
+    else:
+        status_label = "Active" if active else "Cleared"
+        status_kind = "active" if active else "cleared"
+        kind_label = "High temp"
+        email_label = format_alarm_when(row.get("email_sent_at")) if emailed else "Not sent"
     row.update(
         {
             "active": active,
-            "status_label": "Active" if active else "Cleared",
-            "status_kind": "active" if active else "cleared",
+            "kind": kind,
+            "kind_label": kind_label,
+            "status_label": status_label,
+            "status_kind": status_kind,
             "started_label": format_alarm_when(started),
             "cleared_label": "—" if active else format_alarm_when(cleared),
             "duration_label": format_duration(started, end),
-            "peak_label": format_temp(row.get("peak_temp")),
+            "peak_label": "—" if kind == "offline" else format_temp(row.get("peak_temp")),
             "start_temp_label": format_temp(row.get("start_temp")),
             "clear_temp_label": format_temp(row.get("clear_temp")),
-            "high_label": format_temp(row.get("high_temp")),
+            "high_label": "—" if kind == "offline" else format_temp(row.get("high_temp")),
             "reset_label": format_temp(row.get("reset_temp")),
-            "email_label": format_alarm_when(row.get("email_sent_at")) if emailed else "Not sent",
+            "email_label": email_label,
         }
     )
     return row
@@ -1805,7 +1913,7 @@ def load_alarm_history(device_id: str, instrument_id: int) -> list[dict]:
             q(
                 """
                 SELECT id, started_at, cleared_at, peak_temp, start_temp, clear_temp,
-                       high_temp, reset_temp, email_sent, email_sent_at
+                       high_temp, reset_temp, email_sent, email_sent_at, kind
                 FROM alarm_events
                 WHERE device_id=? AND instrument_id=?
                 ORDER BY started_at DESC
