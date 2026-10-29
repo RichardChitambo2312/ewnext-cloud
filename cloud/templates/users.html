@@ -63,21 +63,27 @@
                   <strong>{{ user.name }}</strong>
                   <p class="muted">{{ user.email }}{% if user.organisation_name %} · {{ user.organisation_name }}{% endif %}</p>
                 </div>
-                <span class="status {{ 'done' if user.role_key == 'org_admin' else 'pending' }}">{{ user.role_label }}</span>
+                <span class="status {{ 'done' if user.role_key == 'org_admin' else 'pending' }}">{{ "Admin" if user.role_key == "org_admin" else "Operator" }}</span>
               </header>
-              <form method="post" action="/users/{{ user.id }}/access" class="user-form">
-                <label for="role-{{ user.id }}">Role</label>
-                <select id="role-{{ user.id }}" name="role">
-                  <option value="sub_operator"{% if user.role_key != 'org_admin' %} selected{% endif %}>Sub-organisation operator — monitor portfolio sites</option>
-                  <option value="org_admin"{% if user.role_key == 'org_admin' %} selected{% endif %}>Organisation administrator — all sub-orgs, users and sites</option>
-                </select>
-                <label for="org-{{ user.id }}">Sub-organisation</label>
-                <select id="org-{{ user.id }}" name="organisation_id">
-                  <option value="">Select a sub-organisation</option>
-                  {% for org in sub_orgs %}
-                  <option value="{{ org.id }}"{% if user.organisation_id == org.id %} selected{% endif %}>{{ org.name }}</option>
-                  {% endfor %}
-                </select>
+              <form method="post" action="/users/{{ user.id }}/access" class="user-form user-access">
+                <div class="user-card-fields">
+                  <div>
+                    <label for="role-{{ user.id }}">Role</label>
+                    <select id="role-{{ user.id }}" name="role">
+                      <option value="sub_operator"{% if user.role_key != 'org_admin' %} selected{% endif %}>Operator</option>
+                      <option value="org_admin"{% if user.role_key == 'org_admin' %} selected{% endif %}>Administrator</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label for="org-{{ user.id }}">Sub-organisation</label>
+                    <select id="org-{{ user.id }}" name="organisation_id">
+                      <option value="">None</option>
+                      {% for org in sub_orgs %}
+                      <option value="{{ org.id }}"{% if user.organisation_id == org.id %} selected{% endif %}>{{ org.name }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                </div>
                 <p class="field-label">Sites</p>
                 {% if known_sites %}
                 <div class="site-checks">
@@ -91,13 +97,12 @@
                 {% else %}
                 <p class="muted">No sites yet.</p>
                 {% endif %}
-                <div class="user-actions">
-                  <button class="primary-btn" type="submit">Save access</button>
+                <div class="user-foot">
+                  <button class="primary-btn" type="submit">Save</button>
+                  <button class="ghost-btn" type="submit" form="remove-user-{{ user.id }}">Remove</button>
                 </div>
               </form>
-              <form method="post" action="/users/{{ user.id }}/delete" class="user-delete" onsubmit="return confirm('Remove this user?');">
-                <button class="ghost-btn" type="submit">Remove</button>
-              </form>
+              <form id="remove-user-{{ user.id }}" method="post" action="/users/{{ user.id }}/delete" class="user-delete" onsubmit="return confirm('Remove this user?');"></form>
             </article>
             {% else %}
             <article class="empty">
