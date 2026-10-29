@@ -35,11 +35,20 @@
   --setpoint-fg: #334155;
 
   --font-sans: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-heading: "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif;
   --radius: 14px;
   --radius-sm: 10px;
   --shadow: 0 1px 2px rgba(26, 29, 33, 0.04), 0 8px 24px rgba(26, 29, 33, 0.06);
   --shadow-hover: 0 2px 4px rgba(26, 29, 33, 0.06), 0 14px 32px rgba(41, 128, 185, 0.16);
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/static/fonts/inter-latin.woff2") format("woff2");
 }
 
 *,
@@ -79,6 +88,14 @@ button,
 input,
 select {
   font: inherit;
+}
+
+h1,
+h2,
+h3,
+.eyebrow,
+.kpi-value {
+  font-family: var(--font-heading);
 }
 
 button {
@@ -506,6 +523,7 @@ button {
   background: transparent;
   color: inherit;
   font: inherit;
+  font-family: var(--font-heading);
   font-weight: 700;
   font-size: 0.95rem;
   letter-spacing: -0.02em;
