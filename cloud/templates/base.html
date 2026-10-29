@@ -8,7 +8,7 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>{% block title %}Keyview Cloud{% endblock %}</title>
-  <link rel="stylesheet" href="/static/app.css?v=users1">
+  <link rel="stylesheet" href="/static/app.css?v=invite1">
   {% block extra_head %}{% endblock %}
 </head>
 <body>
@@ -545,7 +545,7 @@
         }
       });
     });
-    {% if page != "instrument" %}
+    {% if page != "instrument" and request.method == "GET" %}
     setTimeout(function () {
       var el = document.activeElement;
       if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT")) return;

@@ -2233,6 +2233,30 @@ th {
   accent-color: var(--nav);
 }
 
+.invite-wait {
+  margin: 10px 0 4px;
+}
+
+.invite-open {
+  display: inline-block;
+  margin-bottom: 4px;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.invite-link {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 8px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--fog);
+  color: var(--ink);
+  font-size: 0.72rem;
+}
+
 .user-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));

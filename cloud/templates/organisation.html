@@ -55,7 +55,11 @@
               {% if invites %}
               <h2>Invites waiting</h2>
               {% for invite in invites %}
-              <p>{{ invite.email }} · {{ invite.role_label }}</p>
+              <p class="invite-wait"><strong>{{ invite.email }}</strong> · {{ invite.role_label }}</p>
+              {% if invite.link %}
+              <a class="invite-open" href="{{ invite.link }}">Open invite</a>
+              <input class="invite-link" readonly value="{{ invite.link }}" onclick="this.select()" aria-label="Invite link for {{ invite.email }}">
+              {% endif %}
               {% endfor %}
               {% endif %}
             </article>

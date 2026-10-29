@@ -3009,13 +3009,12 @@ def refresh_session_sites(request: Request) -> None:
 
 
 def save_org_invite(cur, org_id: int, email: str, role: str) -> str:
-    token = secrets.token_urlsafe(32)
     created = datetime.now(timezone.utc)
     expires = (created + timedelta(days=7)).isoformat()
     cur.execute(
         q(
             """
-            SELECT id FROM org_invites
+            SELECT id, token, expires_at FROM org_invites
             WHERE organisation_id=? AND email=? AND accepted_at IS NULL
             ORDER BY id DESC LIMIT 1
             """
@@ -3025,20 +3024,27 @@ def save_org_invite(cur, org_id: int, email: str, role: str) -> str:
     existing = cur.fetchone()
     if existing:
         invite_id = int(_row_get(existing, "id", 0))
+        current = str(_row_get(existing, "token", 1) or "")
+        exp = parse_ts(_row_get(existing, "expires_at", 2))
+        if current and exp and exp > created:
+            cur.execute(q("UPDATE org_invites SET role=? WHERE id=?"), (role, invite_id))
+            return current
+        token = secrets.token_urlsafe(32)
         cur.execute(
             q("UPDATE org_invites SET role=?, token=?, created_at=?, expires_at=? WHERE id=?"),
             (role, token, created.isoformat(), expires, invite_id),
         )
-    else:
-        cur.execute(
-            q(
-                """
-                INSERT INTO org_invites (organisation_id, email, role, token, created_at, expires_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """
-            ),
-            (org_id, email, role, token, created.isoformat(), expires),
-        )
+        return token
+    token = secrets.token_urlsafe(32)
+    cur.execute(
+        q(
+            """
+            INSERT INTO org_invites (organisation_id, email, role, token, created_at, expires_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """
+        ),
+        (org_id, email, role, token, created.isoformat(), expires),
+    )
     return token
 
 
@@ -3392,7 +3398,7 @@ def organisation_home_ctx(request: Request, error: str | None = None, notice: st
             cur.execute(
                 q(
                     """
-                    SELECT email, role, expires_at FROM org_invites
+                    SELECT email, role, expires_at, token FROM org_invites
                     WHERE organisation_id=? AND accepted_at IS NULL
                     ORDER BY created_at DESC
                     """
@@ -3404,8 +3410,11 @@ def organisation_home_ctx(request: Request, error: str | None = None, notice: st
     names = {k: v["display_name"] for k, v in load_site_records(sites).items()} if sites else {}
     for person in team:
         person["role_label"] = role_label(person.get("role"))
+    base = public_base(request)
     for invite in invites:
         invite["role_label"] = role_label(invite.get("role"))
+        token = str(invite.get("token") or "")
+        invite["link"] = f"{base}/invite/{token}" if token else ""
     ctx = dashboard_shell(request)
     ctx.update(
         {
@@ -3503,11 +3512,8 @@ def organisation_invite(request: Request, email: str = Form(""), role: str = For
     if sent:
         notice = f"Invite emailed to {mail}."
     else:
-        notice = f"Invite saved. Email is not sending yet. Share this link: {link}"
-    return templates.TemplateResponse(
-        "organisation.html",
-        organisation_home_ctx(request, notice=notice),
-    )
+        notice = "Invite saved. Email is not sending yet. Copy the link under Invites waiting."
+    return RedirectResponse(f"/organisation?notice={quote(notice)}", status_code=303)
 
 
 @app.get("/login", response_class=HTMLResponse)
