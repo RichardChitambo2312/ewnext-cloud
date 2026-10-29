@@ -32,9 +32,9 @@
                   <p class="muted">Device ID {{ site }}</p>
                 </div>
                 {% if is_org_lead %}
-                <form method="post" action="/organisation/sites/delete" onsubmit="return confirm({{ ('Remove ' ~ site_names.get(site, site) ~ ' from this organisation? People here will lose access to this site.')|tojson }});">
+                <form method="post" action="/organisation/sites/delete" data-confirm="Delete {{ site_names.get(site, site) }}? People in this organisation will lose access to this site.">
                   <input type="hidden" name="device_id" value="{{ site }}">
-                  <button class="danger-btn" type="submit">Remove</button>
+                  <button class="danger-btn" type="submit">Delete</button>
                 </form>
                 {% endif %}
               </article>
@@ -72,8 +72,8 @@
                 <div class="roster-side">
                   <span class="status {{ 'done' if person.role_key == 'org_admin' else 'pending' }}">{{ "Admin" if person.role_key == "org_admin" else "Operator" }}</span>
                   {% if is_org_lead and not person.is_self %}
-                  <form method="post" action="/organisation/people/{{ person.id }}/delete" onsubmit="return confirm({{ ('Remove ' ~ person.name ~ '? They will not be able to sign in.')|tojson }});">
-                    <button class="danger-btn" type="submit">Remove</button>
+                  <form method="post" action="/organisation/people/{{ person.id }}/delete" data-confirm="Delete {{ person.name }}? They will not be able to sign in.">
+                    <button class="danger-btn" type="submit">Delete</button>
                   </form>
                   {% endif %}
                 </div>
@@ -117,4 +117,12 @@
             </form>
           </article>
         </section>
+        <script>
+          document.querySelectorAll("form[data-confirm]").forEach(function (form) {
+            form.addEventListener("submit", function (event) {
+              var message = form.getAttribute("data-confirm") || "Are you sure you want to delete this?";
+              if (!window.confirm(message)) event.preventDefault();
+            });
+          });
+        </script>
 {% endblock %}

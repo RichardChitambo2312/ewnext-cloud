@@ -99,10 +99,10 @@
                 {% endif %}
                 <div class="user-foot">
                   <button class="primary-btn" type="submit">Save</button>
-                  <button class="ghost-btn" type="submit" form="remove-user-{{ user.id }}">Remove</button>
+                  <button class="ghost-btn" type="submit" form="remove-user-{{ user.id }}" onclick="return confirm({{ ('Delete ' ~ user.name ~ '? They will not be able to sign in.')|tojson|forceescape }});">Delete</button>
                 </div>
               </form>
-              <form id="remove-user-{{ user.id }}" method="post" action="/users/{{ user.id }}/delete" class="user-delete" onsubmit="return confirm('Remove this user?');"></form>
+              <form id="remove-user-{{ user.id }}" method="post" action="/users/{{ user.id }}/delete" class="user-delete"></form>
             </article>
             {% else %}
             <article class="empty">
