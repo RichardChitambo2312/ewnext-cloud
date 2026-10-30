@@ -1051,6 +1051,33 @@ def smtp_configured() -> bool:
     return bool((os.environ.get("SMTP_HOST") or "").strip() and (os.environ.get("SMTP_FROM") or os.environ.get("SMTP_USER") or "").strip())
 
 
+def mail_configured() -> bool:
+    import push_notify
+
+    return smtp_configured() or push_notify.onesignal_email_configured()
+
+
+def _text_email_html(body: str) -> str:
+    blocks: list[str] = []
+    for line in str(body or "").split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("http://") or stripped.startswith("https://"):
+            href = html.escape(stripped, quote=True)
+            label = html.escape(stripped)
+            inner = f'<a href="{href}">{label}</a>'
+        else:
+            inner = html.escape(line) or "&nbsp;"
+        blocks.append(
+            f'<p style="margin:0 0 12px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5;color:#111827;">{inner}</p>'
+        )
+    return (
+        "<!DOCTYPE html><html><body style=\"margin:0;padding:24px;background:#f4f6f8;\">"
+        "<div style=\"max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #e6e9ee;padding:24px;\">"
+        + "".join(blocks)
+        + "</div></body></html>"
+    )
+
+
 def alarm_email_recipients(device_id: str) -> list[str]:
     device_id = str(device_id or "").strip()
     out: list[str] = []
@@ -1091,7 +1118,14 @@ def _smtp_once(host: str, port: int, starttls: bool, msg: EmailMessage, user: st
 
 
 def _deliver_email(recipients: list[str], subject: str, body: str, html_body: str | None = None) -> bool:
-    if not smtp_configured() or not recipients:
+    if not recipients:
+        return False
+    import push_notify
+
+    html_message = html_body or _text_email_html(body)
+    if push_notify.send_onesignal_email(recipients, subject, html_message):
+        return True
+    if not smtp_configured():
         return False
     host = (os.environ.get("SMTP_HOST") or "").strip()
     port = as_int(os.environ.get("SMTP_PORT")) or 587
@@ -1396,7 +1430,7 @@ def _temperature_alarm_notice(
 
 
 def send_alarm_email(inst: dict, temp: float, high: float, started_at: datetime | None = None, now: datetime | None = None) -> bool:
-    if not smtp_configured():
+    if not mail_configured():
         return False
     now = now or datetime.now(timezone.utc)
     recipients = alarm_email_recipients(str(inst.get("device_id") or ""))
@@ -1405,7 +1439,7 @@ def send_alarm_email(inst: dict, temp: float, high: float, started_at: datetime 
 
 
 def send_alarm_resolved_email(inst: dict, temp: float | None, high: float | None, started_at: datetime | None, now: datetime | None = None) -> bool:
-    if not smtp_configured():
+    if not mail_configured():
         return False
     now = now or datetime.now(timezone.utc)
     recipients = alarm_email_recipients(str(inst.get("device_id") or ""))
@@ -3107,7 +3141,7 @@ def dashboard_shell(request: Request | None = None) -> dict:
         "kpis": compute_kpis(kpis_widgets, kpis_sites),
         "alarm_feed": build_alarm_feed(feed_widgets),
         "site_names": {row["device_id"]: row["display_name"] for row in sites},
-        "smtp_configured": smtp_configured(),
+        "smtp_configured": mail_configured(),
         "admin_name": session_name(request) if request is not None else "Admin",
         "is_manager": is_manager(request) if request is not None else True,
         "is_super_admin": is_super_admin(request) if request is not None else False,
@@ -4395,7 +4429,7 @@ def forgot_submit(request: Request, email: str = Form("")):
     if logged_in(request):
         return RedirectResponse("/", status_code=302)
     mail = normalize_email(email)
-    if not smtp_configured():
+    if not mail_configured():
         return templates.TemplateResponse(
             "forgot.html",
             {

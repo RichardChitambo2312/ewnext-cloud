@@ -196,6 +196,51 @@ def onesignal_site_tag(device_id: str) -> str:
     return f"site_{safe or 'unknown'}"
 
 
+def onesignal_email_configured() -> bool:
+    app_id = (os.environ.get("ONESIGNAL_APP_ID") or "").strip()
+    api_key = (os.environ.get("ONESIGNAL_API_KEY") or "").strip()
+    return bool(app_id and api_key)
+
+
+def send_onesignal_email(recipients: list[str], subject: str, html_body: str) -> bool:
+    app_id = (os.environ.get("ONESIGNAL_APP_ID") or "").strip()
+    api_key = (os.environ.get("ONESIGNAL_API_KEY") or "").strip()
+    cleaned: list[str] = []
+    for item in recipients:
+        mail = str(item or "").strip()
+        if mail and mail not in cleaned:
+            cleaned.append(mail)
+    if not app_id or not api_key or not cleaned or not html_body:
+        return False
+    from_addr = (os.environ.get("SMTP_FROM") or os.environ.get("SMTP_USER") or "notifications@keyview.co.za").strip()
+    sender_domain = (os.environ.get("ONESIGNAL_EMAIL_DOMAIN") or "mail.keyview.co.za").strip()
+    payload = {
+        "app_id": app_id,
+        "target_channel": "email",
+        "email_to": cleaned[:50],
+        "email_subject": str(subject or "Keyview")[:180],
+        "email_body": html_body,
+        "include_unsubscribed": True,
+        "email_from_name": "Keyview",
+        "email_from_address": from_addr,
+        "email_sender_domain": sender_domain,
+    }
+    req = urllib.request.Request(
+        "https://api.onesignal.com/notifications",
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers={"Content-Type": "application/json", "Authorization": f"Key {api_key}"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            if 200 <= int(resp.status) < 300:
+                print("onesignal email ok", flush=True)
+                return True
+    except Exception as exc:
+        print(f"onesignal email fail {type(exc).__name__}", flush=True)
+    return False
+
+
 def send_onesignal(title: str, body: str, url: str, device_id: str) -> None:
     app_id = (os.environ.get("ONESIGNAL_APP_ID") or "").strip()
     api_key = (os.environ.get("ONESIGNAL_API_KEY") or "").strip()
