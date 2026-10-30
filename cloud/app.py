@@ -9,9 +9,12 @@ import html
 import json
 import math
 import os
+import queue
 import secrets
 import smtplib
 import sqlite3
+import threading
+import time
 import uuid
 from email.message import EmailMessage
 from contextlib import contextmanager
@@ -1053,6 +1056,28 @@ def alarm_email_recipients(device_id: str) -> list[str]:
     return out
 
 
+_mail_queue: queue.Queue = queue.Queue()
+_mail_lock = threading.Lock()
+_mail_inflight: set[str] = set()
+_mail_retry_after: dict[str, float] = {}
+_mail_started = False
+
+
+def _smtp_once(host: str, port: int, starttls: bool, msg: EmailMessage, user: str, password: str) -> None:
+    if port == 465:
+        with smtplib.SMTP_SSL(host, port, timeout=8) as smtp:
+            if user:
+                smtp.login(user, password)
+            smtp.send_message(msg)
+        return
+    with smtplib.SMTP(host, port, timeout=8) as smtp:
+        if starttls:
+            smtp.starttls()
+        if user:
+            smtp.login(user, password)
+        smtp.send_message(msg)
+
+
 def _deliver_email(recipients: list[str], subject: str, body: str, html_body: str | None = None) -> bool:
     if not smtp_configured() or not recipients:
         return False
@@ -1071,24 +1096,143 @@ def _deliver_email(recipients: list[str], subject: str, body: str, html_body: st
     msg.set_content(body)
     if html_body:
         msg.add_alternative(html_body, subtype="html")
-    try:
-        if port == 465:
-            with smtplib.SMTP_SSL(host, port, timeout=12) as smtp:
-                if user:
-                    smtp.login(user, password)
-                smtp.send_message(msg)
-        else:
-            with smtplib.SMTP(host, port, timeout=12) as smtp:
-                if starttls:
-                    smtp.starttls()
-                if user:
-                    smtp.login(user, password)
-                smtp.send_message(msg)
-        print("email ok", flush=True)
-        return True
-    except Exception as exc:
-        print(f"email fail {type(exc).__name__}", flush=True)
+    attempts = [(host, port, starttls and port != 465)]
+    if port != 587:
+        attempts.append((host, 587, True))
+    last_error = "error"
+    for attempt_host, attempt_port, attempt_tls in attempts:
+        try:
+            _smtp_once(attempt_host, attempt_port, attempt_tls, msg, user, password)
+            print(f"email ok {attempt_port}", flush=True)
+            return True
+        except Exception as exc:
+            last_error = type(exc).__name__
+    print(f"email fail {last_error}", flush=True)
+    return False
+
+
+def _ensure_mailer() -> None:
+    global _mail_started
+    with _mail_lock:
+        if _mail_started:
+            return
+        _mail_started = True
+    threading.Thread(target=_mail_loop, name="keyview-mail", daemon=True).start()
+
+
+def _mail_loop() -> None:
+    while True:
+        job = _mail_queue.get()
+        key = str(job.get("key") or "")
+        ok = False
+        try:
+            ok = _run_mail_job(job)
+        except Exception as exc:
+            print(f"email fail {type(exc).__name__}", flush=True)
+        finally:
+            with _mail_lock:
+                _mail_inflight.discard(key)
+                if not ok and key:
+                    _mail_retry_after[key] = time.monotonic() + 90
+            _mail_queue.task_done()
+
+
+def _queue_alarm_mail(job: dict) -> None:
+    key = str(job.get("key") or "")
+    if not key:
+        return
+    with _mail_lock:
+        if key in _mail_inflight or _mail_retry_after.get(key, 0) > time.monotonic():
+            return
+        _mail_inflight.add(key)
+    _ensure_mailer()
+    _mail_queue.put(job)
+
+
+def flush_alarm_mail(jobs: list[dict]) -> None:
+    for job in jobs:
+        _queue_alarm_mail(job)
+
+
+def _mark_high_emailed(device_id: str, instrument_id: Any) -> None:
+    sent_at = datetime.now(timezone.utc).isoformat()
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            q(
+                """
+                UPDATE instruments SET alarm_email_sent=1
+                WHERE device_id=? AND instrument_id=? AND alarm_active=1
+                """
+            ),
+            (device_id, instrument_id),
+        )
+        cur.execute(
+            q(
+                """
+                UPDATE alarm_events SET email_sent=1, email_sent_at=?
+                WHERE device_id=? AND instrument_id=? AND cleared_at IS NULL
+                  AND COALESCE(kind, 'high')='high' AND email_sent=0
+                """
+            ),
+            (sent_at, device_id, instrument_id),
+        )
+
+
+def _high_alarm_still_open(device_id: str, instrument_id: Any) -> bool:
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            q(
+                """
+                SELECT alarm_active, alarm_email_sent
+                FROM instruments WHERE device_id=? AND instrument_id=?
+                """
+            ),
+            (device_id, instrument_id),
+        )
+        row = _sql_row(cur.fetchone(), cur)
+    if not row:
         return False
+    return bool(int(row.get("alarm_active") or 0)) and not bool(int(row.get("alarm_email_sent") or 0))
+
+
+def _run_mail_job(job: dict) -> bool:
+    inst = job.get("inst") or {}
+    kind = job.get("kind")
+    if kind == "high":
+        if not _high_alarm_still_open(str(job.get("device_id") or ""), job.get("instrument_id")):
+            return True
+        if send_alarm_email(inst, job.get("temp"), job.get("high"), job.get("started_at"), job.get("now")):
+            _mark_high_emailed(str(job.get("device_id") or ""), job.get("instrument_id"))
+            return True
+        return False
+    return send_alarm_resolved_email(inst, job.get("temp"), job.get("high"), job.get("started_at"), job.get("now"))
+
+
+def _alarm_mail_job(inst: dict, kind: str, temp: float | None, high: float | None, started_at: datetime | None, now: datetime) -> dict:
+    device_id = str(inst.get("device_id") or "")
+    instrument_id = inst.get("instrument_id")
+    started_key = started_at.isoformat() if started_at else ""
+    snapshot = {
+        "device_id": device_id,
+        "instrument_id": instrument_id,
+        "label": inst.get("label"),
+        "server_name": inst.get("server_name"),
+        "site_name": inst.get("site_name"),
+        "last_setpoint": inst.get("last_setpoint"),
+    }
+    return {
+        "key": f"{kind}:{device_id}:{instrument_id}:{started_key}",
+        "kind": kind,
+        "device_id": device_id,
+        "instrument_id": instrument_id,
+        "inst": snapshot,
+        "temp": temp,
+        "high": high,
+        "started_at": started_at,
+        "now": now,
+    }
 
 
 def _alarm_site_name(inst: dict) -> str:
@@ -1657,7 +1801,7 @@ def persist_cloud_alarm(cur, inst: dict, active: bool, high_since: datetime | No
     )
 
 
-def apply_cloud_alarm(cur, inst: dict, now: datetime | None = None) -> dict:
+def apply_cloud_alarm(cur, inst: dict, now: datetime | None = None, mail_out: list | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
     high = as_float(inst.get("alarm_high_temp"))
     delay_min = as_float(inst.get("alarm_high_delay_min")) or 0.0
@@ -1715,15 +1859,18 @@ def apply_cloud_alarm(cur, inst: dict, now: datetime | None = None) -> dict:
     if next_active and not next_emailed and next_active_since is not None:
         notify_sec = max(0.0, notify_min) * 60.0
         if (now - next_active_since).total_seconds() >= notify_sec:
-            if send_alarm_email(
+            job = _alarm_mail_job(
                 inst,
+                "high",
                 temp if temp is not None else high or 0.0,
                 high or 0.0,
                 next_active_since,
                 now,
-            ):
-                next_emailed = True
-                persist_cloud_alarm(cur, inst, next_active, next_high_since, next_active_since, True)
+            )
+            if mail_out is not None:
+                mail_out.append(job)
+            else:
+                _queue_alarm_mail(job)
 
     record_alarm_history(
         cur,
@@ -1755,7 +1902,11 @@ def apply_cloud_alarm(cur, inst: dict, now: datetime | None = None) -> dict:
                 f"alarm:{inst.get('device_id')}:{inst.get('instrument_id')}",
             )
             if emailed:
-                send_alarm_resolved_email(inst, temp, high, active_since, now)
+                job = _alarm_mail_job(inst, "resolved", temp, high, active_since, now)
+                if mail_out is not None:
+                    mail_out.append(job)
+                else:
+                    _queue_alarm_mail(job)
     record_offline_history(cur, inst, now)
     record_probe_history(cur, inst, now)
 
@@ -1771,10 +1922,12 @@ def refresh_cloud_alarms(rows: list[dict]) -> list[dict]:
     if not rows:
         return rows
     now = datetime.now(timezone.utc)
+    mail_out: list[dict] = []
     with db() as conn:
         cur = conn.cursor()
         for row in rows:
-            apply_cloud_alarm(cur, row, now)
+            apply_cloud_alarm(cur, row, now, mail_out)
+    flush_alarm_mail(mail_out)
     return rows
 
 
@@ -2560,6 +2713,7 @@ async def ingest(request: Request) -> JSONResponse:
     register_address = reading_register_address(body)
     value_store = reading_value(body, values)
 
+    mail_out: list[dict] = []
     with db() as conn:
         cur = conn.cursor()
         cur.execute(
@@ -2639,7 +2793,7 @@ async def ingest(request: Request) -> JSONResponse:
         found = cur.fetchone()
         inst = _sql_row(found, cur) if found else None
         if inst:
-            apply_cloud_alarm(cur, inst)
+            apply_cloud_alarm(cur, inst, mail_out=mail_out)
             if not body.get("stale") and old_flags is not None and flags is not None:
                 was_on = decode_flags(old_flags)["defrost_active"]
                 now_on = decode_flags(flags)["defrost_active"]
@@ -2692,6 +2846,7 @@ async def ingest(request: Request) -> JSONResponse:
         if apply_subscription_lock(cur, device_id):
             jobs = []
 
+    flush_alarm_mail(mail_out)
     payload_jobs = [
         {
             "id": j["id"],
@@ -4417,6 +4572,7 @@ def set_instrument_alarms(
         delay = None
         reset = None
         notify = None
+    mail_out: list[dict] = []
     with db() as conn:
         cur = conn.cursor()
         cur.execute(
@@ -4444,7 +4600,8 @@ def set_instrument_alarms(
         found = cur.fetchone()
         inst = _sql_row(found, cur) if found else None
         if inst:
-            apply_cloud_alarm(cur, inst)
+            apply_cloud_alarm(cur, inst, mail_out=mail_out)
+    flush_alarm_mail(mail_out)
     if _wants_json(request):
         return JSONResponse(
             {
