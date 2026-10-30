@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import html
 import json
 import math
 import os
@@ -1052,7 +1053,7 @@ def alarm_email_recipients(device_id: str) -> list[str]:
     return out
 
 
-def _deliver_email(recipients: list[str], subject: str, body: str) -> bool:
+def _deliver_email(recipients: list[str], subject: str, body: str, html_body: str | None = None) -> bool:
     if not smtp_configured() or not recipients:
         return False
     host = (os.environ.get("SMTP_HOST") or "").strip()
@@ -1068,6 +1069,8 @@ def _deliver_email(recipients: list[str], subject: str, body: str) -> bool:
     msg["From"] = from_addr
     msg["To"] = ", ".join(recipients)
     msg.set_content(body)
+    if html_body:
+        msg.add_alternative(html_body, subtype="html")
     try:
         if port == 465:
             with smtplib.SMTP_SSL(host, port, timeout=12) as smtp:
@@ -1081,28 +1084,177 @@ def _deliver_email(recipients: list[str], subject: str, body: str) -> bool:
                 if user:
                     smtp.login(user, password)
                 smtp.send_message(msg)
+        print("email ok", flush=True)
         return True
-    except Exception:
+    except Exception as exc:
+        print(f"email fail {type(exc).__name__}", flush=True)
         return False
 
 
-def send_alarm_email(inst: dict, temp: float, high: float) -> bool:
+def _alarm_site_name(inst: dict) -> str:
+    named = str(inst.get("site_name") or "").strip()
+    if named:
+        return named
+    device_id = str(inst.get("device_id") or "").strip()
+    if not device_id:
+        return ""
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(q("SELECT store_name FROM sites WHERE device_id=?"), (device_id,))
+        row = cur.fetchone()
+    if not row:
+        return device_id
+    store = row["store_name"] if isinstance(row, dict) or hasattr(row, "keys") else row[0]
+    return str(store or "").strip() or device_id
+
+
+def _temp_1dp(value: Any) -> str:
+    reading = as_float(value)
+    if reading is None:
+        return "—"
+    return f"{reading:.1f}°C"
+
+
+def _signed_temp(value: float | None) -> str:
+    if value is None:
+        return "—"
+    if value > 0:
+        return f"+{value:.1f}°C"
+    return f"{value:.1f}°C"
+
+
+def _alarm_clock(when: datetime | None, now: datetime) -> str:
+    if when is None:
+        return "—"
+    local = when.astimezone(SA_TZ)
+    if local.date() == now.astimezone(SA_TZ).date():
+        return local.strftime("%H:%M")
+    return local.strftime("%d %b %H:%M")
+
+
+def _alarm_duration_label(start: datetime | None, end: datetime | None) -> str:
+    if start is None or end is None:
+        return "—"
+    mins = max(0, int((end - start).total_seconds()) // 60)
+    if mins < 1:
+        return "under 1 minute"
+    if mins == 1:
+        return "1 minute"
+    if mins < 60:
+        return f"{mins} minutes"
+    hours, rem = divmod(mins, 60)
+    if hours < 48:
+        hour_label = "1 hour" if hours == 1 else f"{hours} hours"
+        if not rem:
+            return hour_label
+        minute_label = "1 minute" if rem == 1 else f"{rem} minutes"
+        return f"{hour_label} {minute_label}"
+    days, hours = divmod(hours, 24)
+    day_label = "1 day" if days == 1 else f"{days} days"
+    if not hours:
+        return day_label
+    hour_label = "1 hour" if hours == 1 else f"{hours} hours"
+    return f"{day_label} {hour_label}"
+
+
+def _temperature_alarm_notice(
+    inst: dict,
+    temp: float | None,
+    high: float | None,
+    started_at: datetime | None,
+    now: datetime,
+    resolved: bool,
+) -> tuple[str, str, str]:
+    name = display_name(inst.get("label"), inst.get("server_name"), inst.get("instrument_id") or 0)
+    site = _alarm_site_name(inst)
+    setpoint = as_float(inst.get("last_setpoint"))
+    current = as_float(temp)
+    deviation = None if current is None or setpoint is None else current - setpoint
+    rows = [
+        ("Site", site or "—"),
+        ("Equipment", name),
+        ("Current temperature", _temp_1dp(current)),
+        ("Setpoint", _temp_1dp(setpoint)),
+        ("Alarm threshold", _temp_1dp(high)),
+        ("Temperature deviation", _signed_temp(deviation)),
+        ("Alarm triggered", _alarm_clock(started_at, now)),
+        ("Alarm duration", _alarm_duration_label(started_at, now)),
+        ("Status", "Resolved" if resolved else "Active – Unacknowledged"),
+    ]
+    if resolved:
+        subject = f"Alarm resolved: {name}"
+        kicker = "HIGH TEMPERATURE ALERT"
+        badge = "RESOLVED"
+        badge_bg = "#e8f6ee"
+        badge_fg = "#157a3b"
+    else:
+        subject = f"High temperature alert: {name}"
+        kicker = "HIGH TEMPERATURE ALERT"
+        badge = "CRITICAL"
+        badge_bg = "#fde8ea"
+        badge_fg = "#d1263f"
+    text_lines = [kicker, name, badge, ""]
+    text_lines.extend(f"{label}: {value}" for label, value in rows)
+    body = "\n".join(text_lines)
+    safe_rows = "".join(
+        "<tr>"
+        f"<td style=\"padding:12px 16px;border-bottom:1px solid #eceff3;color:#1f2937;\">{html.escape(label)}</td>"
+        f"<td style=\"padding:12px 16px;border-bottom:1px solid #eceff3;color:#111827;text-align:right;\">{html.escape(value)}</td>"
+        "</tr>"
+        for label, value in rows
+    )
+    html_body = f"""<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:24px;background:#f4f6f8;font-family:Arial,Helvetica,sans-serif;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #e6e9ee;border-collapse:collapse;">
+    <tr>
+      <td style="padding:22px 22px 8px 22px;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+          <tr>
+            <td style="font-size:12px;letter-spacing:0.08em;color:#4b5563;font-weight:700;">{kicker}</td>
+            <td align="right">
+              <span style="display:inline-block;background:{badge_bg};color:{badge_fg};font-size:12px;font-weight:700;letter-spacing:0.04em;padding:4px 10px;border-radius:999px;">{badge}</span>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:0 22px 18px 22px;font-size:28px;line-height:1.2;font-weight:700;color:#111827;">{html.escape(name)}</td>
+    </tr>
+    <tr>
+      <td style="padding:0 22px 22px 22px;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
+          <tr>
+            <td style="padding:10px 16px;border-bottom:1px solid #e6e9ee;font-weight:700;color:#111827;">Parameter</td>
+            <td style="padding:10px 16px;border-bottom:1px solid #e6e9ee;font-weight:700;color:#111827;text-align:right;">Value</td>
+          </tr>
+          {safe_rows}
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>"""
+    return subject, body, html_body
+
+
+def send_alarm_email(inst: dict, temp: float, high: float, started_at: datetime | None = None, now: datetime | None = None) -> bool:
     if not smtp_configured():
         return False
+    now = now or datetime.now(timezone.utc)
     recipients = alarm_email_recipients(str(inst.get("device_id") or ""))
-    name = display_name(inst.get("label"), inst.get("server_name"), inst.get("instrument_id") or 0)
-    site = str(inst.get("site_name") or inst.get("device_id") or "")
-    subject = f"Keyview alarm: {name} at {site}"
-    body = (
-        f"{name} is in high-temperature alarm.\n\n"
-        f"Site: {site}\n"
-        f"Device ID: {inst.get('device_id')}\n"
-        f"Address: {inst.get('instrument_id')}\n"
-        f"Temperature: {format_temp(temp)}\n"
-        f"High alarm: {format_temp(high)}\n"
-        f"Time (South Africa, GMT+2): {datetime.now(SA_TZ).strftime('%Y-%m-%d %H:%M:%S')}\n"
-    )
-    return _deliver_email(recipients, subject, body)
+    subject, body, html_body = _temperature_alarm_notice(inst, temp, high, started_at, now, resolved=False)
+    return _deliver_email(recipients, subject, body, html_body)
+
+
+def send_alarm_resolved_email(inst: dict, temp: float | None, high: float | None, started_at: datetime | None, now: datetime | None = None) -> bool:
+    if not smtp_configured():
+        return False
+    now = now or datetime.now(timezone.utc)
+    recipients = alarm_email_recipients(str(inst.get("device_id") or ""))
+    subject, body, html_body = _temperature_alarm_notice(inst, temp, high, started_at, now, resolved=True)
+    return _deliver_email(recipients, subject, body, html_body)
 
 
 def _sql_row(row: Any, cur=None) -> dict | None:
@@ -1563,7 +1715,13 @@ def apply_cloud_alarm(cur, inst: dict, now: datetime | None = None) -> dict:
     if next_active and not next_emailed and next_active_since is not None:
         notify_sec = max(0.0, notify_min) * 60.0
         if (now - next_active_since).total_seconds() >= notify_sec:
-            if send_alarm_email(inst, temp if temp is not None else high or 0.0, high or 0.0):
+            if send_alarm_email(
+                inst,
+                temp if temp is not None else high or 0.0,
+                high or 0.0,
+                next_active_since,
+                now,
+            ):
                 next_emailed = True
                 persist_cloud_alarm(cur, inst, next_active, next_high_since, next_active_since, True)
 
@@ -1596,6 +1754,8 @@ def apply_cloud_alarm(cur, inst: dict, now: datetime | None = None) -> dict:
                 url,
                 f"alarm:{inst.get('device_id')}:{inst.get('instrument_id')}",
             )
+            if emailed:
+                send_alarm_resolved_email(inst, temp, high, active_since, now)
     record_offline_history(cur, inst, now)
     record_probe_history(cur, inst, now)
 
