@@ -100,6 +100,7 @@
           show("Alerts stay off until you allow notifications.", false);
           return;
         }
+        if (typeof window.keyviewOneSignalOptIn === "function") window.keyviewOneSignalOptIn();
         subscribe(true).then(markReady).catch(function () {
           allow.disabled = false;
           show("Alerts could not reach this phone. Stay in the home-screen app and try again.", true);

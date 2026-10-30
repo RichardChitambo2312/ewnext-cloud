@@ -4,5 +4,3 @@ __pycache__/
 *.db
 .DS_Store
 cloud/ewnext.db
-functions/node_modules/
-.firebase/

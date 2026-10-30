@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import queue
 import threading
 import time
+import urllib.request
 from typing import Any
 
 _events: queue.Queue[dict[str, str]] = queue.Queue()
@@ -189,6 +191,45 @@ def deliver_one(endpoint: str, p256dh: str, auth: str, title: str, body: str, ur
         return "error"
 
 
+def onesignal_site_tag(device_id: str) -> str:
+    safe = "".join(ch if ch.isalnum() else "_" for ch in str(device_id or ""))[:80]
+    return f"site_{safe or 'unknown'}"
+
+
+def send_onesignal(title: str, body: str, url: str, device_id: str) -> None:
+    app_id = (os.environ.get("ONESIGNAL_APP_ID") or "").strip()
+    api_key = (os.environ.get("ONESIGNAL_API_KEY") or "").strip()
+    if not app_id or not api_key or not device_id:
+        return
+    origin = (os.environ.get("PUBLIC_BASE_URL") or "https://ewnext-cloud.onrender.com").strip().rstrip("/")
+    path = url if str(url or "").startswith("/") else f"/{url or ''}"
+    payload = {
+        "app_id": app_id,
+        "target_channel": "push",
+        "headings": {"en": str(title or "Keyview")[:180]},
+        "contents": {"en": str(body or "")[:500]},
+        "url": origin + path,
+        "filters": [
+            {"field": "tag", "key": onesignal_site_tag(device_id), "relation": "=", "value": "1"},
+            {"operator": "OR"},
+            {"field": "tag", "key": "site_all", "relation": "=", "value": "1"},
+        ],
+    }
+    req = urllib.request.Request(
+        "https://api.onesignal.com/notifications",
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers={"Content-Type": "application/json", "Authorization": f"Key {api_key}"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            if 200 <= int(resp.status) < 300:
+                print("onesignal ok", flush=True)
+                return
+    except Exception as exc:
+        print(f"onesignal fail {type(exc).__name__}", flush=True)
+
+
 def _deliver(item: dict[str, str]) -> None:
     if item.get("direct") == "1":
         deliver_one(
@@ -201,6 +242,7 @@ def _deliver(item: dict[str, str]) -> None:
             item["tag"],
         )
         return
+    send_onesignal(item["title"], item["body"], item["url"], item["device_id"])
     try:
         targets = _recipients(item["device_id"])
     except Exception as exc:

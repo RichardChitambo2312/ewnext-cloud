@@ -15,7 +15,6 @@ import smtplib
 import sqlite3
 import threading
 import time
-import urllib.request
 import uuid
 from email.message import EmailMessage
 from contextlib import contextmanager
@@ -1048,13 +1047,7 @@ INSTRUMENT_SELECT = """
 """
 
 
-def _mail_relay_ready() -> bool:
-    return bool((os.environ.get("MAIL_RELAY_URL") or "").strip() and (os.environ.get("MAIL_RELAY_SECRET") or "").strip())
-
-
 def smtp_configured() -> bool:
-    if _mail_relay_ready():
-        return True
     return bool((os.environ.get("SMTP_HOST") or "").strip() and (os.environ.get("SMTP_FROM") or os.environ.get("SMTP_USER") or "").strip())
 
 
@@ -1097,39 +1090,8 @@ def _smtp_once(host: str, port: int, starttls: bool, msg: EmailMessage, user: st
         smtp.send_message(msg)
 
 
-def _deliver_via_relay(recipients: list[str], subject: str, body: str, html_body: str | None = None) -> bool:
-    url = (os.environ.get("MAIL_RELAY_URL") or "").strip()
-    secret = (os.environ.get("MAIL_RELAY_SECRET") or "").strip()
-    if not url or not secret:
-        return False
-    payload = json.dumps(
-        {"to": recipients, "subject": subject, "text": body, "html": html_body or ""}
-    ).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=payload,
-        method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {secret}",
-        },
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            if 200 <= int(resp.status) < 300:
-                print("email ok relay", flush=True)
-                return True
-    except Exception as exc:
-        print(f"email fail {type(exc).__name__}", flush=True)
-    return False
-
-
 def _deliver_email(recipients: list[str], subject: str, body: str, html_body: str | None = None) -> bool:
-    if not recipients:
-        return False
-    if _mail_relay_ready():
-        return _deliver_via_relay(recipients, subject, body, html_body)
-    if not smtp_configured():
+    if not smtp_configured() or not recipients:
         return False
     host = (os.environ.get("SMTP_HOST") or "").strip()
     port = as_int(os.environ.get("SMTP_PORT")) or 587
@@ -2594,6 +2556,30 @@ def service_worker():
         media_type="application/javascript",
         headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"},
     )
+
+
+@app.get("/push/onesignal/OneSignalSDKWorker.js")
+def onesignal_worker():
+    return FileResponse(
+        STATIC_DIR / "onesignal" / "OneSignalSDKWorker.js",
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
+@app.get("/api/onesignal")
+def onesignal_config(request: Request):
+    app_id = (os.environ.get("ONESIGNAL_APP_ID") or "").strip()
+    if not app_id or not logged_in(request):
+        return {"enabled": False}
+    import push_notify
+
+    if is_super_admin(request) or (request.session.get("admin") and not request.session.get("sites")):
+        tags = ["site_all"]
+    else:
+        tags = [push_notify.onesignal_site_tag(site) for site in (request.session.get("sites") or [])]
+    external = "super" if is_super_admin(request) else f"user-{request.session.get('uid')}"
+    return {"enabled": True, "appId": app_id, "externalId": external, "tags": tags}
 
 
 def _session_push_portfolio(request: Request) -> list[str] | None:
