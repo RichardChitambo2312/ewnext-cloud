@@ -347,6 +347,18 @@ def _log_store_counts(cur) -> None:
 
 def _ensure_column(cur, table: str, column: str, typedef: str) -> None:
     if _is_pg():
+        cur.execute(
+            q(
+                """
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = ? AND column_name = ?
+                """
+            ),
+            (table, column),
+        )
+        if cur.fetchone():
+            return
         cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {typedef}")
         return
     cur.execute(f"PRAGMA table_info({table})")
