@@ -1394,6 +1394,97 @@ def record_offline_history(cur, inst: dict, now: datetime) -> None:
             )
 
 
+# EWNext probe registers are tenths of a degree. -3200 on the controller is -320°C.
+PROBE_FAIL_LOW_C = -320.0
+PROBE_FAIL_HIGH_C = 110.0
+
+
+def probe_reading_failed(value: Any) -> bool:
+    reading = as_float(value)
+    if reading is None:
+        return False
+    return reading <= PROBE_FAIL_LOW_C or reading >= PROBE_FAIL_HIGH_C
+
+
+def probe_failure_parts(inst: dict) -> list[str]:
+    parts: list[str] = []
+    cabinet = as_float(inst.get("last_probe1"))
+    defrost = as_float(inst.get("last_probe2"))
+    if probe_reading_failed(cabinet):
+        parts.append(f"temperature is {format_temp(cabinet)}")
+    if probe_reading_failed(defrost):
+        parts.append(f"defrost temperature is {format_temp(defrost)}")
+    return parts
+
+
+def probe_failed(inst: dict) -> bool:
+    return bool(probe_failure_parts(inst))
+
+
+def failed_probe_value(inst: dict) -> float | None:
+    bad = [
+        reading
+        for reading in (as_float(inst.get("last_probe1")), as_float(inst.get("last_probe2")))
+        if probe_reading_failed(reading)
+    ]
+    if not bad:
+        return None
+    return max(bad, key=lambda reading: abs(reading))
+
+
+def record_probe_history(cur, inst: dict, now: datetime) -> None:
+    device_id = inst.get("device_id")
+    instrument_id = inst.get("instrument_id")
+    if device_id is None or instrument_id is None:
+        return
+    failed = probe_failed(inst)
+    reading = failed_probe_value(inst)
+    open_row = open_alarm_event(cur, device_id, instrument_id, "probe")
+    if failed:
+        if open_row is None:
+            cur.execute(
+                q(
+                    """
+                    INSERT INTO alarm_events (
+                        device_id, instrument_id, started_at, peak_temp, start_temp,
+                        email_sent, kind
+                    ) VALUES (?, ?, ?, ?, ?, 0, 'probe')
+                    """
+                ),
+                (device_id, instrument_id, now.isoformat(), reading, reading),
+            )
+            name, site, url = _instrument_push_target(cur, inst)
+            detail = ", ".join(probe_failure_parts(inst))
+            _push_event(
+                str(device_id),
+                "Probe failure",
+                f"{name} at {site}: {detail}.",
+                url,
+                f"probe:{device_id}:{instrument_id}",
+            )
+            return
+        peak = as_float(open_row.get("peak_temp"))
+        if reading is not None and (peak is None or abs(reading) > abs(peak)):
+            cur.execute(
+                q("UPDATE alarm_events SET peak_temp=? WHERE id=?"),
+                (reading, open_row["id"]),
+            )
+        return
+    if open_row is not None:
+        cur.execute(
+            q("UPDATE alarm_events SET cleared_at=?, clear_temp=? WHERE id=?"),
+            (now.isoformat(), as_float(inst.get("last_probe1")), open_row["id"]),
+        )
+        name, site, url = _instrument_push_target(cur, inst)
+        _push_event(
+            str(device_id),
+            "Probe restored",
+            f"{name} at {site} is reading normally.",
+            url,
+            f"probe:{device_id}:{instrument_id}",
+        )
+
+
 def persist_cloud_alarm(cur, inst: dict, active: bool, high_since: datetime | None, active_since: datetime | None, emailed: bool) -> None:
     cur.execute(
         q(
@@ -1460,6 +1551,14 @@ def apply_cloud_alarm(cur, inst: dict, now: datetime | None = None) -> dict:
         else:
             next_high_since = None
 
+    cabinet_failed = probe_reading_failed(temp)
+    if cabinet_failed:
+        next_active = False
+        next_high_since = None
+        next_active_since = None
+        next_emailed = False
+        pending = False
+
     persist_cloud_alarm(cur, inst, next_active, next_high_since, next_active_since, next_emailed)
     if next_active and not next_emailed and next_active_since is not None:
         notify_sec = max(0.0, notify_min) * 60.0
@@ -1479,7 +1578,7 @@ def apply_cloud_alarm(cur, inst: dict, now: datetime | None = None) -> dict:
         reset=None if high is None else reset,
         started_at=next_active_since,
     )
-    if high is not None and next_active != active:
+    if high is not None and next_active != active and not cabinet_failed:
         name, site, url = _instrument_push_target(cur, inst)
         if next_active:
             _push_event(
@@ -1498,6 +1597,7 @@ def apply_cloud_alarm(cur, inst: dict, now: datetime | None = None) -> dict:
                 f"alarm:{inst.get('device_id')}:{inst.get('instrument_id')}",
             )
     record_offline_history(cur, inst, now)
+    record_probe_history(cur, inst, now)
 
     inst["alarm_active"] = 1 if next_active else 0
     inst["alarm_high_since"] = next_high_since.isoformat() if next_high_since else None
@@ -1754,7 +1854,7 @@ def build_alarm_feed(widgets: list[dict]) -> list[dict[str, Any]]:
             items.append(
                 {
                     "kind": "alarm",
-                    "title": f"Alarm: {name}",
+                    "title": f"Probe failure: {name}" if widget.get("probe_fail") else f"Alarm: {name}",
                     "detail": site,
                     "when": when,
                     "href": widget.get("alarm_history_href") or href,
@@ -1897,6 +1997,9 @@ def decorate_instrument(
             "standby": False,
         }
     pending_value = queued_setpoint(pending, setpoint)
+    probe_on = probe_failed(inst)
+    probe_text = ", ".join(probe_failure_parts(inst))
+    high_on = bool(int(inst.get("alarm_active") or 0))
     live_on = not bool(flags.get("standby"))
     pending_on = queued_power(pending_power_job, live_on)
     live_defrost = bool(flags.get("defrost_active"))
@@ -1911,9 +2014,11 @@ def decorate_instrument(
             "defrost_active": live_defrost if pending_defrost is None else True,
             "live_defrost": live_defrost,
             "pending_defrost": pending_defrost,
-            "alarm": bool(int(inst.get("alarm_active") or 0)),
+            "alarm": high_on or probe_on,
+            "probe_fail": probe_on,
+            "probe_text": probe_text,
             "alarm_pending": bool(inst.get("alarm_pending")),
-            "alarm_label": "ON" if int(inst.get("alarm_active") or 0) else ("WAIT" if inst.get("alarm_pending") else "OFF"),
+            "alarm_label": "PROBE" if probe_on else ("ON" if high_on else ("WAIT" if inst.get("alarm_pending") else "OFF")),
             "alarm_configured": as_float(inst.get("alarm_high_temp")) is not None,
             "alarm_high_temp": as_float(inst.get("alarm_high_temp")),
             "alarm_high_delay_min": as_float(inst.get("alarm_high_delay_min")),
@@ -2014,6 +2119,11 @@ def decorate_alarm_event(row: dict, now: datetime | None = None) -> dict:
         status_kind = "offline" if active else "restored"
         kind_label = "Offline"
         email_label = "—"
+    elif kind == "probe":
+        status_label = "Probe failure" if active else "Probe ok"
+        status_kind = "active" if active else "cleared"
+        kind_label = "Probe failure"
+        email_label = "—"
     else:
         status_label = "Active" if active else "Cleared"
         status_kind = "active" if active else "cleared"
@@ -2032,7 +2142,7 @@ def decorate_alarm_event(row: dict, now: datetime | None = None) -> dict:
             "peak_label": "—" if kind == "offline" else format_temp(row.get("peak_temp")),
             "start_temp_label": format_temp(row.get("start_temp")),
             "clear_temp_label": format_temp(row.get("clear_temp")),
-            "high_label": "—" if kind == "offline" else format_temp(row.get("high_temp")),
+            "high_label": "—" if kind in ("offline", "probe") else format_temp(row.get("high_temp")),
             "reset_label": format_temp(row.get("reset_temp")),
             "email_label": email_label,
         }
@@ -2170,6 +2280,15 @@ def current_push_notes(request: Request) -> list[dict[str, str]]:
             for inst in instruments:
                 name, site, url = _instrument_push_target(cur, inst)
                 ident = f"{device_id}:{inst.get('instrument_id')}"
+                if probe_failed(inst):
+                    notes.append(
+                        {
+                            "title": "Probe failure",
+                            "body": f"{name} at {site}: {', '.join(probe_failure_parts(inst))}.",
+                            "url": url,
+                            "tag": f"probe:{ident}",
+                        }
+                    )
                 if int(inst.get("alarm_active") or 0):
                     notes.append(
                         {
